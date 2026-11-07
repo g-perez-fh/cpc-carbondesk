@@ -15,32 +15,35 @@ in memory, so a pipeline can run over an endless stream of telemetry.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
 
+from shared.models import ActivityRecord
 
-@dataclass
-class ActivityEvent:
+
+@dataclass(kw_only=True)
+class ActivityEvent(ActivityRecord):
     """One piece of operational telemetry: a flight leg, a server power reading, a freight run.
 
-    Field names match the shared ActivityRecord (backend.emissions.models.ActivityRecord /
-    shared.models.ActivityRecord) wherever the same concept applies (scope, category,
-    quantity, unit, site, kg_co2e), so the three subsystems never disagree on what these
-    mean. Emissions are stored in kg CO2e; tco2e exposes the same value in metric tons,
-    same as ActivityRecord. A raw event has no kg_co2e yet - CO2eTransformer fills it in
-    once a scope and factor are known.
+    Inherits from the shared ActivityRecord (shared/models.py), so this subsystem's events
+    and the persisted backend.emissions.models.ActivityRecord never disagree on field names
+    (scope, category, quantity, unit, site, kg_co2e). A raw event doesn't know everything a
+    persisted record does yet, so the record-only fields it can't supply at creation time
+    (organisation_id, factor_value, site, date, kg_co2e) get defaults here; CO2eTransformer
+    fills in kg_co2e once a scope and emission factor are known, and tco2e (overridden below)
+    stays None until it does.
     """
 
     event_id: str
     source: str
-    scope: int
-    category: str
-    quantity: Decimal
-    unit: str
     timestamp: datetime
-    site: str = ""
-    kg_co2e: Decimal | None = None
     metadata: dict = field(default_factory=dict)
+    organisation_id: int | None = None
+    site: str = ""
+    date: date_type | None = None
+    factor_value: Decimal | None = None
+    kg_co2e: Decimal | None = None
 
     @property
     def tco2e(self) -> Decimal | None:

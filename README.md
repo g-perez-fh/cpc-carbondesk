@@ -302,14 +302,14 @@ Carbon Footprint Tracker topic: it ingests telemetry (flight bookings, data-cent
 power logs, freight payloads), filters it by scope tag, and converts quantities to
 CO2e. It has no Django imports and no database access.
 
-`ActivityEvent` (in `base.py`) is a thin wrapper around the project's shared
-[`ActivityRecord`](#shared-data-model-team-proposal) shape: it reuses the same
-field names (`scope`, `category`, `quantity`, `unit`, `site`, `kg_co2e`) for
-everything a raw telemetry event has in common with a persisted activity record,
-and adds only the fields a live event needs that a stored record doesn't
-(`event_id`, `source`, `timestamp`, `metadata`). Emissions are stored in kg CO2e,
-same as everywhere else in the project; `tco2e` is a read-only property for
-metric tons, filled in only after `CO2eTransformer` has run.
+`ActivityEvent` (in `base.py`) is a real subclass of the project's shared
+[`ActivityRecord`](#shared-data-model-team-proposal): it inherits every record
+field (`scope`, `category`, `quantity`, `unit`, `site`, `kg_co2e`, ...) and adds
+only what a live telemetry event needs that a stored record doesn't (`event_id`,
+`source`, `timestamp`, `metadata`). Fields a raw event can't know yet
+(`organisation_id`, `site`, `date`, `factor_value`, `kg_co2e`) get defaults, and
+`tco2e` is overridden to stay `None` until `CO2eTransformer` fills in `kg_co2e` -
+a second example of polymorphism alongside the `StreamProcessor` subclasses.
 
 | File | Subsystem | Contents |
 | --- | --- | --- |
@@ -327,63 +327,63 @@ source | ScopeFilter({1, 2}) | CO2eTransformer(factors) | ScopeTotalsAggregator(
 
 ```mermaid
 classDiagram
+    class ActivityRecord {
+        + organisation_id : int
+        + site : str
+        + date : date
+        + scope : int
+        + category : str
+        + quantity : Decimal
+        + unit : str
+        + factor_value : Decimal
+        + kg_co2e : Decimal
+        + id : int
+        + get_tco2e() : Decimal
+    }
     class ActivityEvent {
-        +str event_id
-        +str source
-        +int scope
-        +str category
-        +Decimal quantity
-        +str unit
-        +datetime timestamp
-        +str site
-        +Decimal kg_co2e
-        +dict metadata
-        +get_tco2e() Decimal
+        + event_id : str
+        + source : str
+        + timestamp : datetime
+        + metadata : dict
+        + get_tco2e() : Decimal
     }
     class StreamProcessor {
         <<abstract>>
-        +process(events : Iterable) Iterator
-        +__or__(other : StreamProcessor) Pipeline
-        +__ror__(events : Iterable) Pipeline
+        + process(events : Iterable) : Iterator
+        + #95;#95;iter#95;#95;() : Iterator
+        + #95;#95;or#95;#95;(other : StreamProcessor) : Pipeline
+        + #95;#95;ror#95;#95;(events : Iterable) : Pipeline
     }
     class Pipeline {
-        +List~StreamProcessor~ stages
-        +process(events : Iterable) Iterator
+        + stages : List~StreamProcessor~
+        + process(events : Iterable) : Iterator
     }
     class EventSource {
-        +__iter__() EventSource
-        +__next__() ActivityEvent
+        + #95;#95;iter#95;#95;() : EventSource
+        + #95;#95;next#95;#95;() : ActivityEvent
     }
     class ScopeFilter {
-        +Set~int~ scopes
-        +process(events : Iterable) Iterator
+        + scopes : Set~int~
+        + process(events : Iterable) : Iterator
     }
     class CO2eTransformer {
-        +Dict~str, Decimal~ factors
-        +process(events : Iterable) Iterator
+        + factors : Dict~str, Decimal~
+        + process(events : Iterable) : Iterator
     }
     class ScopeTotalsAggregator {
-        +Dict~int, Decimal~ totals
-        +process(events : Iterable) Iterator
+        + totals : Dict~int, Decimal~
+        + process(events : Iterable) : Iterator
     }
     class WindowedKpi {
-        +int window
-        +process(events : Iterable) Iterator
+        + window : int
+        + process(events : Iterable) : Iterator
     }
     class PeakDetector {
-        +Decimal threshold
-        +process(events : Iterable) Iterator
-    }
-    class ActivityRecord {
-        <<interface>>
-        +int organisation_id
-        +str site
-        +date date
-        +int scope
-        +Decimal kg_co2e
-        +get_tco2e() Decimal
+        + threshold : Decimal
+        + process(events : Iterable) : Iterator
     }
 
+    ActivityRecord <|-- ActivityEvent
     StreamProcessor <|-- Pipeline
     StreamProcessor <|-- ScopeFilter
     StreamProcessor <|-- CO2eTransformer
@@ -397,15 +397,16 @@ classDiagram
     ScopeTotalsAggregator ..> ActivityEvent : reads kg_co2e, tco2e
     WindowedKpi ..> ActivityEvent : reads kg_co2e, tco2e
     PeakDetector ..> ActivityEvent : reads tco2e
-    ActivityEvent ..> ActivityRecord : shares field names with
-    note for ActivityRecord "Shared model (shared/models.py), mirrors Emissions' persisted ActivityRecord"
+    note for ActivityRecord "Shared model, shared/models.py - also the Emissions subsystem's persisted shape"
+    note for ActivityEvent "Overrides get_tco2e(): stays None until CO2eTransformer sets kg_co2e. organisation_id, site, date, factor_value default to None/empty - not known when an event is created."
 ```
 
 Every attribute above is a plain public field, set once when the object is built
 and never mutated through a setter (the pipeline stages are configured once, not
-edited in place) — except `ActivityEvent.tco2e` and `ActivityRecord.tco2e`, which
-are read-only computed properties (`get_tco2e() : Decimal`), and `kg_co2e`, which
-`CO2eTransformer` fills in as the one write after construction.
+edited in place) — except `tco2e`, a read-only computed property
+(`get_tco2e() : Decimal`) that `ActivityEvent` overrides to handle an unset
+`kg_co2e`, and `kg_co2e` itself, which `CO2eTransformer` fills in as the one
+write after construction.
 
 Run the demo and the tests from the repository root (same virtual environment as
 the rest of the project):

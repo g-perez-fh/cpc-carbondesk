@@ -1,7 +1,7 @@
 """Analytics subsystem (Harib): aggregation, rolling KPIs, and peak detection.
 
 These stages run after ScopeFilter and CO2eTransformer, so every event they see
-already has scope and co2e_tonnes set.
+already has scope and kg_co2e set.
 """
 
 from decimal import Decimal
@@ -43,7 +43,7 @@ class WindowedKpi(StreamProcessor):
                 yield {
                     "events": count,
                     "total_tco2e": total,
-                    "average_tco2e": total / count,
+                    "average_tco2e": (total / count).quantize(Decimal("0.0001")),
                 }
 
 
