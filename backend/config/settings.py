@@ -73,6 +73,18 @@ if DB_ENGINE == "postgresql":
             "PORT": os.getenv("POSTGRES_PORT", "5432"),
         }
     }
+elif DB_ENGINE == "mysql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.getenv("MYSQL_DATABASE", "carbondesk"),
+            "USER": os.getenv("MYSQL_USER", "carbondesk"),
+            "PASSWORD": os.environ["MYSQL_PASSWORD"],
+            "HOST": os.getenv("MYSQL_HOST", "localhost"),
+            "PORT": os.getenv("MYSQL_PORT", "3306"),
+            "OPTIONS": {"charset": "utf8mb4", "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"},
+        }
+    }
 elif DB_ENGINE == "sqlite":
     DATABASES = {
         "default": {
@@ -81,7 +93,7 @@ elif DB_ENGINE == "sqlite":
         }
     }
 else:
-    raise ImproperlyConfigured("DB_ENGINE must be sqlite or postgresql.")
+    raise ImproperlyConfigured("DB_ENGINE must be sqlite, postgresql or mysql.")
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
