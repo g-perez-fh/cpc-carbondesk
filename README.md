@@ -269,3 +269,42 @@ A template is available from the import dialog.
 Streaming, activity editing/deletion, factor-change recalculation, and department
 links are follow-up work. This slice uses the existing PostgreSQL/SQLite setup;
 MySQL support for Hometask 3 is still pending.
+
+## Hometask 3: Django + MySQL
+
+The project can now run against MySQL instead of SQLite/PostgreSQL, through
+`.env` only - no other code changes needed. `backend/config/settings.py` adds a
+`DB_ENGINE=mysql` branch next to the existing `sqlite`/`postgresql` ones, and
+`backend/config/__init__.py` installs the pure-Python `PyMySQL` driver as a
+drop-in for Django's MySQL backend (`mysqlclient` needs a C compiler, which
+`PyMySQL` avoids - friendlier on Windows).
+
+**Setup:**
+
+1. Install MySQL (Docker, or the native installer) and create a database:
+   ```sql
+   CREATE DATABASE carbondesk CHARACTER SET utf8mb4;
+   ```
+2. In your local `.env` (never commit real credentials - only `.env.example`'s
+   placeholders are tracked), set:
+   ```
+   DB_ENGINE=mysql
+   MYSQL_DB=carbondesk
+   MYSQL_USER=root
+   MYSQL_PASSWORD=your-real-password
+   MYSQL_HOST=127.0.0.1
+   MYSQL_PORT=3306
+   ```
+3. Install dependencies and migrate as usual:
+   ```bash
+   python -m pip install -r requirements-dev.txt
+   python backend/manage.py migrate
+   ```
+
+The analytics dashboard (`/api/analytics/dashboard/`) needs no MySQL-specific
+code - `backend/analytics/services.py` and `views.py` are unchanged; Django's
+ORM reads through whichever `DB_ENGINE` is configured. Switching `DB_ENGINE`
+back to `sqlite` or `postgresql` in `.env` restores the previous setup exactly
+as before.
+
+Video: [link to be added]
