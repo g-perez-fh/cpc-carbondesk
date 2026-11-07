@@ -22,7 +22,7 @@ PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
 | Name | Matriculation no. | Subsystem |
 |---|---|---|
 | Harib Khalid | 7225862 | Analytics Dashboard & Reporting |
-| Guillermo Pérez Pérez | [to be added] | Emissions Data & Calculation |
+| Guillermo Pérez Pérez | Not listed in this README | Emissions Data & Calculation |
 | Omotunde Sholola Ganiyu | 7227720 | Users, Organisation & Targets; AI Sustainability Assistant |
 
 CarbonDesk is our Compact Programming capstone project at FH Dortmund. We are
@@ -225,8 +225,7 @@ export. PDF reports are still to come.
 | Analytics | `analytics/dashboard/`, `analytics/export/csv/` (both accept `start`, `end`, `scope`, `site`) |
 | Assistant | `assistant/conversations/`, `assistant/conversations/<id>/messages/`, `assistant/recommendations/`, `assistant/summaries/` |
 
-Implemented UML diagrams and the team presentation video link will be added as
-development progresses.
+Submission materials: add the rendered LaTeX UML diagrams and direct team video link before submitting. The video link is currently pending.
 
 ## First emissions workflow
 
@@ -291,18 +290,11 @@ rules as manual entry and receives its own audit-log entry. The import does not
 check for duplicate activities, so re-uploading a file creates the rows again.
 A template is available from the import dialog.
 
-Streaming, activity editing/deletion, factor-change recalculation, and department
-links are follow-up work. This slice uses the existing PostgreSQL/SQLite setup;
-MySQL support for Hometask 3 is still pending.
+Activity entry, editing and deletion, factor recalculation, CSV import, and department links are implemented. The main development setup uses SQLite or PostgreSQL; Home Assignment 3 documents the separate MySQL workflow.
 
-## Hometask 3: Django + MySQL
+## Home Assignment 3: Django + MySQL
 
-The project can now run against MySQL instead of SQLite/PostgreSQL, through
-`.env` only - no other code changes needed. `backend/config/settings.py` adds a
-`DB_ENGINE=mysql` branch next to the existing `sqlite`/`postgresql` ones, and
-`backend/config/__init__.py` installs the pure-Python `PyMySQL` driver as a
-drop-in for Django's MySQL backend (`mysqlclient` needs a C compiler, which
-`PyMySQL` avoids - friendlier on Windows).
+The project supports MySQL through Django’s configured database backend. Set `DB_ENGINE=mysql` and the MySQL connection values in `.env`; `backend/config/__init__.py` registers the pinned PyMySQL driver. The default SQLite/PostgreSQL workflow remains available.
 
 **Setup:**
 
@@ -339,9 +331,9 @@ Organisations, members, sites, targets with progress, alerts, the audit log,
 recommendations and monthly summaries are read from and written to MySQL through
 the same API and pages.
 
-Video: [link to be added]
+**Team video:** pending recording and upload. Add the direct link here before submission.
 
-## Hometask 4: Custom exceptions — Users, Organisation & Targets and AI Assistant (Omotunde)
+## Home Assignment 4: Custom exceptions — Users, Organisation & Targets and AI Assistant (Omotunde)
 
 `backend/accounts/exceptions.py` and `backend/assistant/exceptions.py` follow the
 same pattern as `backend/analytics/exceptions.py`. Each subsystem has one base class.
