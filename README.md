@@ -23,7 +23,7 @@ PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
 |---|---|---|
 | Harib Khalid | 7225862 | Analytics Dashboard & Reporting |
 | Guillermo Pérez Pérez | [to be added] | Emissions Data & Calculation |
-| Omotunde Sholola Ganiyu | [to be added] | Users, Organisation & Targets; AI Sustainability Assistant |
+| Omotunde Sholola Ganiyu | 7227720 | Users, Organisation & Targets; AI Sustainability Assistant |
 
 CarbonDesk is our Compact Programming capstone project at FH Dortmund. We are
 building a web platform for small and medium companies to track Scope 1, 2,
@@ -316,6 +316,8 @@ a second example of polymorphism alongside the `StreamProcessor` subclasses.
 | `stream_processing/base.py` | Shared (whole team) | `ActivityEvent`, `StreamProcessor` ABC, `Pipeline`, `EventSource` |
 | `stream_processing/emissions_processors.py` | Emissions (Guillermo) | `ScopeFilter`, `CO2eTransformer` — extend here |
 | `stream_processing/analytics_processors.py` | Analytics (Harib) | `ScopeTotalsAggregator`, `WindowedKpi`, `PeakDetector` |
+| `stream_processing/accounts_processors.py` | Users, Organisation & Targets (Omotunde) | `OrganisationFilter`, `TargetAlertProcessor` |
+| `stream_processing/assistant_processors.py` | AI Assistant (Omotunde) | `SavingsEstimator`, `HotspotRecommender` |
 | `stream_processing/demo.py` | — | Synthetic telemetry and a full pipeline run |
 
 Stages chain with the `|` operator, left to right, and compose lazily (nothing is
@@ -382,6 +384,32 @@ classDiagram
         + threshold : Decimal
         + process(events : Iterable) Iterator
     }
+    class OrganisationFilter {
+        + organisation_id : int
+        + process(events : Iterable) Iterator
+    }
+    class TargetAlertProcessor {
+        + target_kg_co2e : Decimal
+        + warning_ratio : Decimal
+        + running_kg_co2e : Decimal
+        + process(events : Iterable) Iterator
+    }
+    class SavingsEstimator {
+        + reduction_shares : Dict~str, Decimal~
+        + process(events : Iterable) Iterator
+    }
+    class HotspotRecommender {
+        + share_threshold : Decimal
+        + min_events : int
+        + suggestions : Dict~str, str~
+        + process(events : Iterable) Iterator
+    }
+    class ReductionTarget {
+        <<interface>>
+        + scope : str
+        + target_year : int
+        + get_target_kg_co2e() Decimal
+    }
 
     ActivityRecord <|-- ActivityEvent
     StreamProcessor <|-- Pipeline
@@ -390,6 +418,10 @@ classDiagram
     StreamProcessor <|-- ScopeTotalsAggregator
     StreamProcessor <|-- WindowedKpi
     StreamProcessor <|-- PeakDetector
+    StreamProcessor <|-- OrganisationFilter
+    StreamProcessor <|-- TargetAlertProcessor
+    StreamProcessor <|-- SavingsEstimator
+    StreamProcessor <|-- HotspotRecommender
     Pipeline "1" o-- "1..*" StreamProcessor : stages
     EventSource "1" ..> "0..*" ActivityEvent : yields
     ScopeFilter ..> ActivityEvent : reads scope
@@ -397,6 +429,12 @@ classDiagram
     ScopeTotalsAggregator ..> ActivityEvent : reads kg_co2e, tco2e
     WindowedKpi ..> ActivityEvent : reads kg_co2e, tco2e
     PeakDetector ..> ActivityEvent : reads tco2e
+    OrganisationFilter ..> ActivityEvent : reads organisation_id
+    TargetAlertProcessor ..> ActivityEvent : reads kg_co2e
+    TargetAlertProcessor ..> ReductionTarget : budget from
+    SavingsEstimator ..> ActivityEvent : sets metadata
+    HotspotRecommender ..> ActivityEvent : reads category, kg_co2e
+    note for ReductionTarget "Accounts subsystem, accounts.models.ReductionTarget"
     note for ActivityRecord "Shared model, shared/models.py - also the Emissions subsystem's persisted shape"
     note for ActivityEvent "Overrides get_tco2e(): stays None until CO2eTransformer sets kg_co2e. organisation_id, site, date, factor_value default to None/empty - not known when an event is created."
 ```
@@ -407,6 +445,22 @@ edited in place) — except `tco2e`, a read-only computed property
 (`get_tco2e() : Decimal`) that `ActivityEvent` overrides to handle an unset
 `kg_co2e`, and `kg_co2e` itself, which `CO2eTransformer` fills in as the one
 write after construction.
+
+Omotunde's stages work on the same shared `ActivityEvent` fields and stay in
+kg CO2e. `OrganisationFilter` keeps one company's events (the streaming version of
+the web app's data isolation). `TargetAlertProcessor` yields one `warning` alert
+when the running `kg_co2e` reaches 80% of a reduction target's yearly budget, and
+one `critical` alert when it passes it. `SavingsEstimator` adds an estimated saving
+to `metadata`. `HotspotRecommender` yields advice once one category causes a large
+share of emissions. Like `ScopeTotalsAggregator.totals`,
+`TargetAlertProcessor.running_kg_co2e` is running state that the stage updates
+while it processes:
+
+```python
+company = source | OrganisationFilter(1) | CO2eTransformer(factors)
+alerts = company | TargetAlertProcessor(target_kg_co2e="500")
+advice = company | SavingsEstimator(shares) | HotspotRecommender(share_threshold="0.4")
+```
 
 Run the demo and the tests from the repository root (same virtual environment as
 the rest of the project):

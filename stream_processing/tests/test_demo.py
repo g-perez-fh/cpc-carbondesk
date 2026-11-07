@@ -22,3 +22,5 @@ def test_run_demo_executes_without_error(capsys):
     output = capsys.readouterr().out
     assert "Final totals by scope" in output
     assert "Peak events" in output
+    assert "Target alerts" in output
+    assert "Assistant recommendations" in output
