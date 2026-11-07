@@ -315,61 +315,61 @@ format.
 ```mermaid
 classDiagram
     class DashboardService {
-        -int org_id
-        -dict filters
-        -dict cache
-        +setup(records : List~ActivityRecord~) DashboardService
-        +get_org_id() int
-        +set_org_id(value : int) void
-        +summary() Dict~int, Decimal~
-        +trend() List~dict~
+        - org_id : int
+        - filters : dict
+        - cache : dict
+        + setup(records : List~ActivityRecord~) : DashboardService
+        + get_org_id() : int
+        + set_org_id(value : int) : void
+        + summary() : Dict~int, Decimal~
+        + trend() : List~dict~
     }
     class KpiCalculator {
-        -str period
-        -Decimal baseline_kg
-        -int score
-        +setup(records : List~ActivityRecord~) KpiCalculator
-        +get_score() int
-        +set_score(value : int) void
-        +recompute_score() int
-        +top_sources(limit : int) List~dict~
+        - period : str
+        - baseline_kg : Decimal
+        - score : int
+        + setup(records : List~ActivityRecord~) : KpiCalculator
+        + get_score() : int
+        + set_score(value : int) : void
+        + recompute_score() : int
+        + top_sources(limit : int) : List~dict~
     }
     class ChartBuilder {
-        -List~str~ palette
-        -str title
-        -List~dict~ data
-        +setup(data : List~dict~) ChartBuilder
-        +donut() dict
-        +line() dict
+        - palette : List~str~
+        - title : str
+        - data : List~dict~
+        + setup(data : List~dict~) : ChartBuilder
+        + donut() : dict
+        + line() : dict
     }
     class ReportExporter {
-        -str format
-        -datetime created_at
-        -int user_id
-        +setup(rows : List~dict~, columns : List~str~) ReportExporter
-        +to_csv() str
-        +to_pdf() bytes
+        - format : str
+        - created_at : datetime
+        - user_id : int
+        + setup(rows : List~dict~, columns : List~str~) : ReportExporter
+        + to_csv() : str
+        + to_pdf() : bytes
     }
     class ActivityRecord {
         <<interface>>
-        +int organisation_id
-        +str site
-        +date date
-        +int scope
-        +Decimal kg_co2e
-        +get_tco2e() Decimal
+        + organisation_id : int
+        + site : str
+        + date : date
+        + scope : int
+        + kg_co2e : Decimal
+        + get_tco2e() : Decimal
     }
     class Organisation {
         <<interface>>
-        +int id
-        +str name
+        + id : int
+        + name : str
     }
     class ReductionTarget {
         <<interface>>
-        +str scope
-        +Decimal baseline_kg_co2e
-        +int target_year
-        +get_target_kg_co2e() Decimal
+        + scope : str
+        + baseline_kg_co2e : Decimal
+        + target_year : int
+        + get_target_kg_co2e() : Decimal
     }
 
     DashboardService "1" o-- "0..*" ActivityRecord : holds
