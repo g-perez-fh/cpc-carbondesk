@@ -537,3 +537,31 @@ read but don't own. This diagram is deliberately at the subsystem level, not
 the class level — see the Hometask 1 and Hometask 2 sections above for the
 class-level UML within Analytics, including the `<<interface>>` boxes for
 `ActivityRecord`, `Organisation`, and `ReductionTarget`.
+
+## Emissions integration with the shared stream
+
+Guillermo's `backend/emissions/streaming.py` uses the team's `ActivityEvent`,
+`StreamProcessor`, `Pipeline`, and `EventSource`. `ActivityStream` is an alias
+for `EventSource`, not a second iterator implementation. Compose stages with
+`|`; `process(events)` yields shared objects instead of accepting individual dicts.
+
+`EmissionTransformer` maps **category** to a factor containing `scope`, `unit`,
+and `kg_per_unit`. It validates units and scope using `CO2eCalculator`, rounds
+half up to 0.01 kg, and returns a new event with `factor_value` and `kg_co2e`.
+The shared `tco2e` property provides tonnes; identity, organisation, site, date,
+and telemetry metadata are retained. It does not mutate the input event.
+
+Unlike the existing `CO2eTransformer` demonstration stage, this stricter stage
+raises `EmissionsError` for unknown factors or invalid input. Existing team
+processors remain unchanged. Either stage produces events that analytics and
+assistant stages can consume. No Django/database setup is required for this demo:
+
+```bash
+PYTHONPATH=backend:. python examples/emissions_stream.py
+python -m pytest backend/emissions/tests/test_streaming.py stream_processing shared
+```
+
+The demo uses a synthetic factor: 100 kWh × 0.4 gives 40.00 kg CO2e / 0.04 tonnes.
+The older standalone emissions diagram and recording script using `+` and dicts
+must be updated to this shared contract before recording; they are not copied
+into this integration branch.
