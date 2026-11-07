@@ -214,7 +214,8 @@ development progresses.
    quantity. Preview the calculation, then save it. Alternatively, choose
    **Import CSV** to add many activities from one file.
 5. Browse the records, filter by date/scope/site, and open **Details** to inspect
-   the inputs used. Saved totals also feed the assistant and reduction targets.
+   the inputs used. Admins/editors can choose **Edit activity** or **Delete activity**
+   here. Deletion asks for confirmation. Saved totals also feed the assistant and targets.
 
 For a reproducible example, use a separate demo organisation and add a factor
 named **Demo electricity**, Scope 2, unit `kWh`, value `0.4`, source **Synthetic
@@ -227,13 +228,28 @@ assistant and targets; keep demo activity separate from real company data.
 ### Endpoint behavior
 
 - `GET/POST /api/emissions/factors/`: list or add company factors. Each new
-  source/version is a separate factor; update/delete is not exposed yet.
+  source/version can be a separate factor. PATCH/PUT on `factors/<id>/` corrects
+  a factor while keeping its unit and scope fixed. Saved activities stay unchanged.
+- `POST /api/emissions/factors/<id>/recalculate/`: explicitly apply the current
+  factor to all linked company activities, across all dates/sites. Send the latest
+  GET factor object as `{"factor": {...}}`; stale confirmations return HTTP 409.
+  The operation is atomic and retains before/after activity snapshots in the audit log.
+  Admins/editors can update and recalculate; viewers cannot. Factor deletion is not exposed.
 - `POST /api/emissions/preview/`: send `factor`, `quantity`, and `unit`; receive
-  `kg_co2e` without saving a record.
+  `kg_co2e` without saving a record. Include an `activity` ID when editing to
+  preview its saved factor inputs if the factor selection is unchanged.
 - `GET/POST /api/emissions/activities/`: list or create records. Creation accepts
   `description`, `date` (`YYYY-MM-DD`), `factor` ID, `site` ID, `quantity`, and
   `unit`. The backend assigns the company, creator, scope, and result.
-- `GET /api/emissions/activities/<id>/`: inspect the original calculation inputs.
+- `GET /api/emissions/activities/<id>/`: inspect the saved calculation inputs.
+- `PATCH/PUT /api/emissions/activities/<id>/`: correct an activity and recalculate.
+  PATCH accepts only changed fields; PUT requires all entry fields. When selecting
+  a factor with a different unit, send that unit too.
+- `DELETE /api/emissions/activities/<id>/`: remove an activity from totals (HTTP 204).
+  Admins/editors may edit/delete; viewers cannot. Before/after edit snapshots and
+  deleted record details remain in the existing audit log, atomically with the change.
+  Edits keep the saved factor version unless a different factor is selected.
+  The creator and creation date remain unchanged. There is no restore button.
 - `POST /api/emissions/activities/import/`: upload a CSV file in the `file`
   multipart field. The response reports how many records were created.
 - `GET /api/emissions/summary/`: record count, demo count, total and scope totals.
@@ -250,7 +266,8 @@ allow eight. Zero is valid. Units must match exactly: conversions are not implic
 Activity dates cannot be in the future. The calculation uses `Decimal` and rounds
 half up to **0.01 kg CO2e** once per record; totals sum those saved results.
 Records preserve the factor name, scope, value, unit, source, year, and demo flag
-used at creation. Writes use the existing audit log.
+used in the latest calculation. Recalculation replaces these snapshots while
+retaining the previous values in the audit log. Writes use the existing audit log.
 
 ### CSV import
 
@@ -266,6 +283,15 @@ rules as manual entry and receives its own audit-log entry. The import does not
 check for duplicate activities, so re-uploading a file creates the rows again.
 A template is available from the import dialog.
 
-Streaming, activity editing/deletion, factor-change recalculation, and department
+Streaming and department
 links are follow-up work. This slice uses the existing PostgreSQL/SQLite setup;
 MySQL support for Hometask 3 is still pending.
+
+### Correcting a factor
+
+On **Emissions → Emission factors**, select **Edit factor** and save the correction.
+New activities use the corrected value; existing activities keep their saved inputs.
+Choose **Recalculate activities** and confirm to update all linked records and totals.
+Use a new factor for a different unit, scope, or a separate publication/version.
+Editing an existing activity with its original factor continues to use its saved
+calculation inputs until explicit recalculation. Its preview follows the same rule.
