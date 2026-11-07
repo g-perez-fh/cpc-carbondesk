@@ -21,7 +21,15 @@ from decimal import Decimal
 
 @dataclass
 class ActivityEvent:
-    """One piece of operational telemetry: a flight leg, a server power reading, a freight run."""
+    """One piece of operational telemetry: a flight leg, a server power reading, a freight run.
+
+    Field names match the shared ActivityRecord (backend.emissions.models.ActivityRecord /
+    shared.models.ActivityRecord) wherever the same concept applies (scope, category,
+    quantity, unit, site, kg_co2e), so the three subsystems never disagree on what these
+    mean. Emissions are stored in kg CO2e; tco2e exposes the same value in metric tons,
+    same as ActivityRecord. A raw event has no kg_co2e yet - CO2eTransformer fills it in
+    once a scope and factor are known.
+    """
 
     event_id: str
     source: str
@@ -31,8 +39,15 @@ class ActivityEvent:
     unit: str
     timestamp: datetime
     site: str = ""
-    co2e_tonnes: Decimal | None = None
+    kg_co2e: Decimal | None = None
     metadata: dict = field(default_factory=dict)
+
+    @property
+    def tco2e(self) -> Decimal | None:
+        """kg_co2e converted to metric tons CO2e, or None if not yet converted."""
+        if self.kg_co2e is None:
+            return None
+        return self.kg_co2e / Decimal("1000")
 
 
 class StreamProcessor(ABC):

@@ -73,7 +73,7 @@ def run_demo():
     )
     print("\nPeak events (>= 0.05 tCO2e):")
     for event in peak_pipeline:
-        print(f"  {event.event_id} {event.category}: {event.co2e_tonnes:.4f} t")
+        print(f"  {event.event_id} {event.category}: {event.tco2e:.4f} t")
 
 
 if __name__ == "__main__":

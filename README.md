@@ -300,7 +300,16 @@ MySQL support for Hometask 3 is still pending.
 `stream_processing/` is a plain-Python, framework-free pipeline for the Enterprise
 Carbon Footprint Tracker topic: it ingests telemetry (flight bookings, data-center
 power logs, freight payloads), filters it by scope tag, and converts quantities to
-metric tons of CO2e. It has no Django imports and no database access.
+CO2e. It has no Django imports and no database access.
+
+`ActivityEvent` (in `base.py`) is a thin wrapper around the project's shared
+[`ActivityRecord`](#shared-data-model-team-proposal) shape: it reuses the same
+field names (`scope`, `category`, `quantity`, `unit`, `site`, `kg_co2e`) for
+everything a raw telemetry event has in common with a persisted activity record,
+and adds only the fields a live event needs that a stored record doesn't
+(`event_id`, `source`, `timestamp`, `metadata`). Emissions are stored in kg CO2e,
+same as everywhere else in the project; `tco2e` is a read-only property for
+metric tons, filled in only after `CO2eTransformer` has run.
 
 | File | Subsystem | Contents |
 | --- | --- | --- |
@@ -326,51 +335,77 @@ classDiagram
         +Decimal quantity
         +str unit
         +datetime timestamp
-        +Decimal co2e_tonnes
+        +str site
+        +Decimal kg_co2e
+        +dict metadata
+        +get_tco2e() Decimal
     }
     class StreamProcessor {
         <<abstract>>
-        +process(events)
-        +__or__(other)
-        +__ror__(events)
+        +process(events : Iterable) Iterator
+        +__or__(other : StreamProcessor) Pipeline
+        +__ror__(events : Iterable) Pipeline
     }
     class Pipeline {
-        +list stages
-        +process(events)
+        +List~StreamProcessor~ stages
+        +process(events : Iterable) Iterator
     }
     class EventSource {
-        +__iter__()
-        +__next__()
+        +__iter__() EventSource
+        +__next__() ActivityEvent
     }
     class ScopeFilter {
-        +set scopes
-        +process(events)
+        +Set~int~ scopes
+        +process(events : Iterable) Iterator
     }
     class CO2eTransformer {
-        +dict factors
-        +process(events)
+        +Dict~str, Decimal~ factors
+        +process(events : Iterable) Iterator
     }
     class ScopeTotalsAggregator {
-        +dict totals
-        +process(events)
+        +Dict~int, Decimal~ totals
+        +process(events : Iterable) Iterator
     }
     class WindowedKpi {
         +int window
-        +process(events)
+        +process(events : Iterable) Iterator
     }
     class PeakDetector {
         +Decimal threshold
-        +process(events)
+        +process(events : Iterable) Iterator
     }
+    class ActivityRecord {
+        <<interface>>
+        +int organisation_id
+        +str site
+        +date date
+        +int scope
+        +Decimal kg_co2e
+        +get_tco2e() Decimal
+    }
+
     StreamProcessor <|-- Pipeline
     StreamProcessor <|-- ScopeFilter
     StreamProcessor <|-- CO2eTransformer
     StreamProcessor <|-- ScopeTotalsAggregator
     StreamProcessor <|-- WindowedKpi
     StreamProcessor <|-- PeakDetector
-    Pipeline o-- StreamProcessor
-    EventSource ..> ActivityEvent
+    Pipeline "1" o-- "1..*" StreamProcessor : stages
+    EventSource "1" ..> "0..*" ActivityEvent : yields
+    ScopeFilter ..> ActivityEvent : reads scope
+    CO2eTransformer ..> ActivityEvent : sets kg_co2e
+    ScopeTotalsAggregator ..> ActivityEvent : reads kg_co2e, tco2e
+    WindowedKpi ..> ActivityEvent : reads kg_co2e, tco2e
+    PeakDetector ..> ActivityEvent : reads tco2e
+    ActivityEvent ..> ActivityRecord : shares field names with
+    note for ActivityRecord "Shared model (shared/models.py), mirrors Emissions' persisted ActivityRecord"
 ```
+
+Every attribute above is a plain public field, set once when the object is built
+and never mutated through a setter (the pipeline stages are configured once, not
+edited in place) — except `ActivityEvent.tco2e` and `ActivityRecord.tco2e`, which
+are read-only computed properties (`get_tco2e() : Decimal`), and `kg_co2e`, which
+`CO2eTransformer` fills in as the one write after construction.
 
 Run the demo and the tests from the repository root (same virtual environment as
 the rest of the project):
@@ -381,3 +416,69 @@ python -m pytest stream_processing
 ```
 
 Video: [link to be added]
+
+## Shared data model (team proposal)
+
+Our professor's feedback was that the project has too many different data
+formats for the same thing, and no connected concept of the system across
+subsystems. For Analytics, one activity record existed in three shapes: the
+Django model `backend.emissions.models.ActivityRecord` (`kg_co2e`), plain dicts
+in `backend/analytics/domain.py`, and the `ActivityEvent` dataclass here.
+
+`shared/models.py` is a proposal to fix that: one plain-Python `ActivityRecord`
+dataclass with field names that match the Django model exactly
+(`organisation_id`, `site`, `date`, `scope`, `category`, `quantity`, `unit`,
+`factor_value`, `kg_co2e`), storing emissions in kg CO2e everywhere with a
+read-only `tco2e` property for metric tons. It has no Django dependency, so any
+subsystem can import it (`pythonpath = ["backend", "."]` already makes
+`shared.models` importable from both `backend/` and `stream_processing/`).
+
+On the Analytics side, `backend/analytics/domain.py` (Hometask 1) and
+`stream_processing/base.py`'s `ActivityEvent` (Hometask 2, this branch) both now
+use these exact field names, so an activity record means the same thing
+wherever it shows up in Analytics code. **Proposal for the team:** Emissions and
+Accounts/AI Assistant code should read and write the same shape instead of their
+own dicts/tuples, so the whole project — not just Analytics — agrees on one
+format for an activity record.
+
+## System architecture (team proposal)
+
+**This section is a proposal for the whole team, not yet implemented outside
+Analytics.** It responds to the feedback that the subsystems' interfaces aren't
+connected into one system concept.
+
+```mermaid
+flowchart LR
+    subgraph EM["Emissions (Guillermo)"]
+        EF[EmissionFactor]
+    end
+    subgraph AC["Accounts / Organisation / Targets (Omotunde)"]
+        ORG[Organisation, Site]
+        RT[ReductionTarget]
+    end
+    subgraph AN["Analytics (Harib)"]
+        DS[DashboardService, KpiCalculator]
+        CB[ChartBuilder, ReportExporter]
+    end
+    subgraph AI["AI Assistant (Omotunde)"]
+        ASSIST[Assistant]
+    end
+
+    SHARED(("ActivityRecord<br/>shared/models.py"))
+
+    EM -- "calculates & provides" --> SHARED
+    SHARED -- "consumed by" --> AN
+    SHARED -- "consumed by" --> AI
+    AC -- "org scope, targets" --> AN
+    AC -- "org scope, targets" --> AI
+    AN -- "dashboard summaries, KPI scores" --> AI
+```
+
+Emissions calculates and owns `ActivityRecord` (quantity, factor, `kg_co2e`);
+Analytics and the AI Assistant only ever consume it, through the shared shape
+above, instead of each inventing their own copy. Accounts/Targets provides the
+organisation scope and reduction targets that Analytics and the AI Assistant
+read but don't own. This diagram is deliberately at the subsystem level, not
+the class level — see the Hometask 1 and Hometask 2 sections above for the
+class-level UML within Analytics, including the `<<interface>>` boxes for
+`ActivityRecord`, `Organisation`, and `ReductionTarget`.

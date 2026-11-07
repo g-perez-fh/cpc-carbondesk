@@ -1,7 +1,7 @@
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
 pythonpath = ["backend", "."]
-testpaths = ["backend", "frontend/tests", "stream_processing"]
+testpaths = ["backend", "frontend/tests", "stream_processing", "shared"]
 python_files = ["test_*.py"]
 
 [tool.ruff]
@@ -16,4 +16,4 @@ ignore = ["EXE"]
 "**/migrations/*.py" = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["accounts", "analytics", "assistant", "config", "core", "emissions", "frontend", "stream_processing"]
+known-first-party = ["accounts", "analytics", "assistant", "config", "core", "emissions", "frontend", "shared", "stream_processing"]

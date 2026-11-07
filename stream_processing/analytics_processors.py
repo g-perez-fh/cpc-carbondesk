@@ -17,11 +17,9 @@ class ScopeTotalsAggregator(StreamProcessor):
 
     def process(self, events):
         for event in events:
-            if event.co2e_tonnes is None:
+            if event.kg_co2e is None:
                 continue
-            self.totals[event.scope] = (
-                self.totals.get(event.scope, Decimal("0")) + event.co2e_tonnes
-            )
+            self.totals[event.scope] = self.totals.get(event.scope, Decimal("0")) + event.tco2e
             yield dict(self.totals)
 
 
@@ -37,10 +35,10 @@ class WindowedKpi(StreamProcessor):
         count = 0
         total = Decimal("0")
         for event in events:
-            if event.co2e_tonnes is None:
+            if event.kg_co2e is None:
                 continue
             count += 1
-            total += event.co2e_tonnes
+            total += event.tco2e
             if count % self.window == 0:
                 yield {
                     "events": count,
@@ -57,5 +55,5 @@ class PeakDetector(StreamProcessor):
 
     def process(self, events):
         for event in events:
-            if event.co2e_tonnes is not None and event.co2e_tonnes >= self.threshold:
+            if event.kg_co2e is not None and event.tco2e >= self.threshold:
                 yield event

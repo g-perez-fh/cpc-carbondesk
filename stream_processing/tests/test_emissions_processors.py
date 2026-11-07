@@ -34,17 +34,19 @@ def test_scope_filter_with_empty_set_keeps_nothing():
     assert list(ScopeFilter(set()).process(events)) == []
 
 
-def test_co2e_transformer_converts_kg_to_metric_tonnes():
+def test_co2e_transformer_sets_kg_co2e_and_tco2e():
     factors = {"Electricity": Decimal("0.4")}
     event = make_event(2, "Electricity", 1000)
     (result,) = list(CO2eTransformer(factors).process([event]))
-    assert result.co2e_tonnes == Decimal("0.4")
+    assert result.kg_co2e == Decimal("400")
+    assert result.tco2e == Decimal("0.4")
 
 
 def test_co2e_transformer_leaves_unknown_categories_unconverted():
     event = make_event(2, "Unknown fuel", 100)
     (result,) = list(CO2eTransformer({}).process([event]))
-    assert result.co2e_tonnes is None
+    assert result.kg_co2e is None
+    assert result.tco2e is None
 
 
 def test_scope_filter_then_transformer_chain_via_pipe():
@@ -53,4 +55,5 @@ def test_scope_filter_then_transformer_chain_via_pipe():
     pipeline = events | ScopeFilter({2}) | CO2eTransformer(factors)
     (result,) = list(pipeline)
     assert result.scope == 2
-    assert result.co2e_tonnes == Decimal("0.4")
+    assert result.kg_co2e == Decimal("400")
+    assert result.tco2e == Decimal("0.4")
