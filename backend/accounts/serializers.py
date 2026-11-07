@@ -1,14 +1,11 @@
 from django.contrib.auth import authenticate
-from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from . import services
 from .models import Alert, AuditLog, Organisation, ReductionTarget, Site, User
 
-
-def as_drf_error(exc: DjangoValidationError, field=None):
-    detail = exc.messages if field is None else {field: exc.messages}
-    return serializers.ValidationError(detail)
+# Business-rule errors from services (accounts.exceptions) are not caught here: they
+# pass through validation and are turned into JSON responses by AccountsAPIMixin.
 
 
 class OrganisationScopedSerializer(serializers.ModelSerializer):
@@ -92,19 +89,13 @@ class MemberSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"password": "Members change their own password."}
                 )
-            try:
-                services.ensure_admin_remains(
-                    self.instance, role=attrs.get("role"), is_active=attrs.get("is_active")
-                )
-            except DjangoValidationError as exc:
-                raise as_drf_error(exc) from exc
+            services.ensure_admin_remains(
+                self.instance, role=attrs.get("role"), is_active=attrs.get("is_active")
+            )
         return attrs
 
     def create(self, validated_data):
-        try:
-            return services.create_member(**validated_data)
-        except DjangoValidationError as exc:
-            raise as_drf_error(exc, "password") from exc
+        return services.create_member(**validated_data)
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -121,10 +112,7 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def create(self, validated_data):
-        try:
-            return services.register_organisation(**validated_data)
-        except DjangoValidationError as exc:
-            raise as_drf_error(exc, "password") from exc
+        return services.register_organisation(**validated_data)
 
 
 class LoginSerializer(serializers.Serializer):
@@ -169,18 +157,13 @@ class ReductionTargetSerializer(OrganisationScopedSerializer):
             field: attrs.get(field, getattr(self.instance, field, None))
             for field in ("scope", "baseline_year", "target_year")
         }
-        merged["scope"] = merged["scope"] or ReductionTarget.Scope.ALL
-        if merged["target_year"] <= merged["baseline_year"]:
-            raise serializers.ValidationError(
-                {"target_year": "The target year must be after the baseline year."}
-            )
-        duplicate = self.scoped(ReductionTarget.objects).filter(
-            scope=merged["scope"], target_year=merged["target_year"]
+        services.check_target(
+            self.organisation,
+            scope=merged["scope"] or ReductionTarget.Scope.ALL,
+            baseline_year=merged["baseline_year"],
+            target_year=merged["target_year"],
+            exclude=self.instance,
         )
-        if duplicate.exists():
-            raise serializers.ValidationError(
-                {"target_year": "A target for this scope and year already exists."}
-            )
         return attrs
 
 

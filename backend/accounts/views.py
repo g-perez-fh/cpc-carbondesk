@@ -1,6 +1,3 @@
-from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
-from django.db.models.deletion import ProtectedError
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -11,6 +8,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from . import services
+from .exceptions import AccountsError
 from .mixins import OrganisationScopedMixin
 from .models import Alert, AuditLog, ReductionTarget, Site, User
 from .permissions import IsOrganisationAdmin, IsOrganisationAdminOrReadOnly, IsOrganisationMember
@@ -24,7 +22,6 @@ from .serializers import (
     RegisterSerializer,
     SiteSerializer,
     UserSerializer,
-    as_drf_error,
 )
 
 
@@ -33,10 +30,19 @@ def session_payload(user):
     return {"token": token.key, "user": UserSerializer(user).data}
 
 
+class AccountsAPIMixin:
+    """Turn any AccountsError raised by a service into a clean JSON error response."""
+
+    def handle_exception(self, exc):
+        if isinstance(exc, AccountsError):
+            return Response(exc.as_response_data(), status=exc.status_code)
+        return super().handle_exception(exc)
+
+
 # Authentication --------------------------------------------------------------
 
 
-class AuthView(APIView):
+class AuthView(AccountsAPIMixin, APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
@@ -101,23 +107,16 @@ class OrganisationView(generics.RetrieveUpdateAPIView):
             )
 
 
-class SiteViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
+class SiteViewSet(AccountsAPIMixin, OrganisationScopedMixin, viewsets.ModelViewSet):
     queryset = Site.objects.all()
     serializer_class = SiteSerializer
     permission_classes = [IsOrganisationAdminOrReadOnly]
 
-    @transaction.atomic
     def perform_destroy(self, instance):
-        try:
-            super().perform_destroy(instance)
-        except ProtectedError as exc:
-            # Roll back the audit entry as well: no site was actually deleted.
-            raise as_drf_error(
-                DjangoValidationError("This site has activity records and cannot be deleted.")
-            ) from exc
+        services.delete_site(instance, actor=self.request.user)
 
 
-class MemberViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
+class MemberViewSet(AccountsAPIMixin, OrganisationScopedMixin, viewsets.ModelViewSet):
     """Members of the organisation. Deleting a member deactivates the account."""
 
     queryset = User.objects.order_by("username")
@@ -126,10 +125,7 @@ class MemberViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def perform_destroy(self, instance):
-        try:
-            services.ensure_admin_remains(instance, is_active=False)
-        except DjangoValidationError as exc:
-            raise as_drf_error(exc) from exc
+        services.ensure_admin_remains(instance, is_active=False)
         if instance.is_active:
             instance.is_active = False
             instance.save(update_fields=["is_active"])
@@ -150,7 +146,7 @@ class MemberViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
 # Targets, alerts and audit history ---------------------------------------------
 
 
-class ReductionTargetViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
+class ReductionTargetViewSet(AccountsAPIMixin, OrganisationScopedMixin, viewsets.ModelViewSet):
     queryset = ReductionTarget.objects.select_related("organisation")
     serializer_class = ReductionTargetSerializer
     permission_classes = [IsOrganisationAdminOrReadOnly]

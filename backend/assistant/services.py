@@ -11,6 +11,7 @@ from core import emissions_data
 
 from . import llm
 from .context import CompanySnapshot, build_snapshot
+from .exceptions import AIServiceUnavailableError, EmptyMessageError, InvalidPeriodError
 from .models import Conversation, Message, MonthlySummary
 from .recommendations import recommend
 
@@ -47,7 +48,9 @@ def start_conversation(user, title="") -> Conversation:
 
 def send_message(conversation: Conversation, text: str, as_of: date | None = None):
     """Store the user's question and the assistant's answer; return both messages."""
-    text = text.strip()[:MAX_MESSAGE_LENGTH]
+    text = (text or "").strip()[:MAX_MESSAGE_LENGTH]
+    if not text:
+        raise EmptyMessageError()
     history = list(conversation.messages.order_by("-created_at", "-id")[:HISTORY_LIMIT])[::-1]
     question = Message.objects.create(
         conversation=conversation, role=Message.Role.USER, content=text
@@ -58,7 +61,7 @@ def send_message(conversation: Conversation, text: str, as_of: date | None = Non
     messages.append({"role": "user", "content": text})
     try:
         reply = llm.complete(CHAT_INSTRUCTIONS.format(data=snapshot.to_prompt()), messages)
-    except llm.LLMUnavailable:
+    except AIServiceUnavailableError:
         reply = rule_based_reply(snapshot)
 
     answer = Message.objects.create(
@@ -108,6 +111,8 @@ def rule_based_reply(snapshot: CompanySnapshot) -> str:
 def generate_monthly_summary(organisation, month: date, user=None) -> MonthlySummary:
     """Create or refresh the summary for the month containing ``month``."""
     month = month.replace(day=1)
+    if month > date.today().replace(day=1):
+        raise InvalidPeriodError("Summaries can only be generated for past or current months.")
     current = emissions_data.totals_by_scope(organisation, *emissions_data.month_range(month))
     previous_month = emissions_data.previous_month(month)
     previous = emissions_data.totals_by_scope(
@@ -139,7 +144,7 @@ def generate_monthly_summary(organisation, month: date, user=None) -> MonthlySum
                 SUMMARY_INSTRUCTIONS.format(organisation=organisation.name),
                 [{"role": "user", "content": prompt}],
             )
-        except llm.LLMUnavailable:
+        except AIServiceUnavailableError:
             pass
 
     summary, _ = MonthlySummary.objects.update_or_create(

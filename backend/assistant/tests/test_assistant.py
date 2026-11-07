@@ -6,6 +6,7 @@ import pytest
 
 from accounts.models import Organisation, User
 from assistant import llm, services
+from assistant.exceptions import AIServiceUnavailableError
 from assistant.models import Conversation, MonthlySummary
 from assistant.recommendations import recommend
 
@@ -99,13 +100,13 @@ def test_chat_sends_company_data_and_history_to_model(viewer_user, emissions, se
 
 def test_chat_falls_back_when_ai_service_fails(viewer_user, emissions):
     conversation = services.start_conversation(viewer_user)
-    with patch("assistant.services.llm.complete", side_effect=llm.LLMUnavailable("down")):
+    with patch("assistant.services.llm.complete", side_effect=AIServiceUnavailableError("down")):
         _, answer = services.send_message(conversation, "Hello")
     assert "No emissions have been recorded" in answer.content
 
 
 def test_llm_requires_api_key():
-    with pytest.raises(llm.LLMUnavailable):
+    with pytest.raises(AIServiceUnavailableError):
         llm.complete("instructions", [{"role": "user", "content": "hi"}])
 
 

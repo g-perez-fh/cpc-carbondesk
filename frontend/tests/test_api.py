@@ -42,6 +42,10 @@ def _response(status, payload=None):
         ({"detail": "Not allowed."}, "Not allowed."),
         ({"non_field_errors": ["Invalid username or password."]}, "Invalid username or password."),
         ({"target_year": ["Must be later."]}, "target year: Must be later."),
+        (
+            {"error": "last_admin", "detail": "Needs an admin.", "field": "role"},
+            "Needs an admin.",
+        ),
     ],
 )
 def test_error_messages_are_readable(payload, expected):

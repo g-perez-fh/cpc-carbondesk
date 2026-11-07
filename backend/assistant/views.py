@@ -9,7 +9,8 @@ from accounts.mixins import OrganisationScopedMixin
 from accounts.permissions import CanEditDataOrReadOnly, IsOrganisationMember
 
 from . import services
-from .context import build_snapshot
+from .context import MAX_YEAR, MIN_YEAR, build_snapshot
+from .exceptions import AssistantError
 from .models import Conversation, MonthlySummary
 from .serializers import (
     ConversationDetailSerializer,
@@ -21,7 +22,17 @@ from .serializers import (
 )
 
 
+class AssistantAPIMixin:
+    """Turn any AssistantError raised by a service into a clean JSON error response."""
+
+    def handle_exception(self, exc):
+        if isinstance(exc, AssistantError):
+            return Response(exc.as_response_data(), status=exc.status_code)
+        return super().handle_exception(exc)
+
+
 class ConversationViewSet(
+    AssistantAPIMixin,
     OrganisationScopedMixin,
     mixins.CreateModelMixin,
     mixins.ListModelMixin,
@@ -62,7 +73,7 @@ class ConversationViewSet(
         )
 
 
-class RecommendationsView(APIView):
+class RecommendationsView(AssistantAPIMixin, APIView):
     """Ranked reduction measures with indicative savings for a year (default: current)."""
 
     permission_classes = [IsOrganisationMember]
@@ -74,9 +85,9 @@ class RecommendationsView(APIView):
             return Response({"year": ["Enter a valid year."]}, status=status.HTTP_400_BAD_REQUEST)
         # The snapshot also needs the previous year and next January as an
         # exclusive end date, so both neighbouring years must be representable.
-        if not 2 <= year <= 9998:
+        if not MIN_YEAR <= year <= MAX_YEAR:
             return Response(
-                {"year": ["Enter a year between 2 and 9998."]},
+                {"year": [f"Enter a year between {MIN_YEAR} and {MAX_YEAR}."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         snapshot = build_snapshot(request.user.organisation, year=year)
@@ -91,6 +102,7 @@ class RecommendationsView(APIView):
 
 
 class MonthlySummaryViewSet(
+    AssistantAPIMixin,
     OrganisationScopedMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,

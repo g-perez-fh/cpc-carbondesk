@@ -4,11 +4,9 @@ import logging
 
 from django.conf import settings
 
+from .exceptions import AIServiceUnavailableError
+
 logger = logging.getLogger(__name__)
-
-
-class LLMUnavailable(Exception):
-    """Raised when no model is configured or the request fails; callers fall back."""
 
 
 def is_configured() -> bool:
@@ -18,7 +16,7 @@ def is_configured() -> bool:
 def complete(instructions: str, messages: list[dict]) -> str:
     """Return the model's reply to a list of {"role", "content"} messages."""
     if not is_configured():
-        raise LLMUnavailable("OPENAI_API_KEY is not set.")
+        raise AIServiceUnavailableError("OPENAI_API_KEY is not set.")
 
     from openai import OpenAI, OpenAIError
 
@@ -32,9 +30,9 @@ def complete(instructions: str, messages: list[dict]) -> str:
         )
     except OpenAIError as exc:
         logger.warning("OpenAI request failed: %s", exc.__class__.__name__)
-        raise LLMUnavailable("The AI service is unavailable.") from exc
+        raise AIServiceUnavailableError("The AI service is unavailable.") from exc
 
     text = (response.output_text or "").strip()
     if not text:
-        raise LLMUnavailable("The AI service returned an empty answer.")
+        raise AIServiceUnavailableError("The AI service returned an empty answer.")
     return text

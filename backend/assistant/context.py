@@ -7,7 +7,11 @@ from decimal import Decimal
 from accounts.services import TargetProgress, target_progress
 from core import emissions_data
 
+from .exceptions import InvalidPeriodError
 from .recommendations import Recommendation, recommend
+
+MIN_YEAR = 2
+MAX_YEAR = 9998
 
 
 @dataclass
@@ -70,6 +74,9 @@ class CompanySnapshot:
 def build_snapshot(organisation, year: int | None = None, as_of: date | None = None):
     as_of = as_of or date.today()
     year = year or as_of.year
+    # The previous year and next January must also be valid dates.
+    if not MIN_YEAR <= year <= MAX_YEAR:
+        raise InvalidPeriodError(f"Enter a year between {MIN_YEAR} and {MAX_YEAR}.")
     totals = emissions_data.totals_by_scope(organisation, *emissions_data.year_range(year))
     previous = emissions_data.totals_by_scope(organisation, *emissions_data.year_range(year - 1))
     targets = [

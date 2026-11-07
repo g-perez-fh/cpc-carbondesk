@@ -23,7 +23,7 @@ PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
 |---|---|---|
 | Harib Khalid | 7225862 | Analytics Dashboard & Reporting |
 | Guillermo Pérez Pérez | [to be added] | Emissions Data & Calculation |
-| Omotunde Sholola Ganiyu | [to be added] | Users, Organisation & Targets; AI Sustainability Assistant |
+| Omotunde Sholola Ganiyu | 7227720 | Users, Organisation & Targets; AI Sustainability Assistant |
 
 CarbonDesk is our Compact Programming capstone project at FH Dortmund. We are
 building a web platform for small and medium companies to track Scope 1, 2,
@@ -332,4 +332,126 @@ ORM reads through whichever `DB_ENGINE` is configured. Switching `DB_ENGINE`
 back to `sqlite` or `postgresql` in `.env` restores the previous setup exactly
 as before.
 
+**Users, Organisation & Targets and AI Assistant (Omotunde):** these also need no
+MySQL-specific code. All their migrations apply on MySQL 8.0, and their test suites
+(`python -m pytest backend/accounts backend/assistant`) pass against MySQL.
+Organisations, members, sites, targets with progress, alerts, the audit log,
+recommendations and monthly summaries are read from and written to MySQL through
+the same API and pages.
+
 Video: [link to be added]
+
+## Hometask 4: Custom exceptions — Users, Organisation & Targets and AI Assistant (Omotunde)
+
+`backend/accounts/exceptions.py` and `backend/assistant/exceptions.py` follow the
+same pattern as `backend/analytics/exceptions.py`. Each subsystem has one base class.
+Every subclass sets an `error_code`, a `status_code` and a `default_message`, and
+`as_response_data()` returns the JSON body. Services raise the errors, and one mixin
+per app (`AccountsAPIMixin`, `AssistantAPIMixin`, which work like
+`AnalyticsAPIView.handle_exception`) turns them into clean JSON responses such as
+`{"error": "last_admin", "detail": "..."}`. `field` names the request field an error
+belongs to, if any.
+
+| Class | Status | Raised when |
+| --- | --- | --- |
+| `accounts.exceptions.AccountsError` | 400 | Base class |
+| `LastAdminError` | 409 | A change would leave the organisation without an active admin |
+| `WeakPasswordError` | 400 | Registration or a new member's password fails Django's validators |
+| `SiteInUseError` | 400 | A site with activity records is deleted (the audit entry is rolled back) |
+| `InvalidTargetError` | 400 | A reduction target's target year is not after its baseline year, or duplicates another target |
+| `assistant.exceptions.AssistantError` | 400 | Base class |
+| `EmptyMessageError` | 400 | A chat message has no text |
+| `InvalidPeriodError` | 400 | A summary is requested for a future month, or a year is out of range |
+| `AIServiceUnavailableError` | 503 | The OpenAI call fails or no key is set; chat and summaries catch it and answer from rules |
+
+```mermaid
+classDiagram
+    class Exception {
+        <<interface>>
+    }
+    class AccountsError {
+        + error_code : str
+        + status_code : int
+        + default_message : str
+        + field : str
+        + message : str
+        + #95;#95;init#95;#95;(message : str) void
+        + as_response_data() dict
+    }
+    class LastAdminError {
+        + error_code : str = "last_admin"
+        + status_code : int = 409
+    }
+    class WeakPasswordError {
+        + error_code : str = "weak_password"
+        + status_code : int = 400
+    }
+    class SiteInUseError {
+        + error_code : str = "site_in_use"
+        + status_code : int = 400
+    }
+    class InvalidTargetError {
+        + error_code : str = "invalid_target"
+        + status_code : int = 400
+    }
+    class AssistantError {
+        + error_code : str
+        + status_code : int
+        + default_message : str
+        + field : str
+        + message : str
+        + #95;#95;init#95;#95;(message : str) void
+        + as_response_data() dict
+    }
+    class EmptyMessageError {
+        + error_code : str = "empty_message"
+        + status_code : int = 400
+    }
+    class InvalidPeriodError {
+        + error_code : str = "invalid_period"
+        + status_code : int = 400
+    }
+    class AIServiceUnavailableError {
+        + error_code : str = "ai_unavailable"
+        + status_code : int = 503
+    }
+    class AccountsAPIMixin {
+        + handle_exception(exc : Exception) Response
+    }
+    class AssistantAPIMixin {
+        + handle_exception(exc : Exception) Response
+    }
+    class ActivityRecord {
+        <<interface>>
+        + site : str
+        + kg_co2e : Decimal
+    }
+    class ReductionTarget {
+        <<interface>>
+        + scope : str
+        + baseline_year : int
+        + target_year : int
+    }
+
+    Exception <|-- AccountsError
+    AccountsError <|-- LastAdminError
+    AccountsError <|-- WeakPasswordError
+    AccountsError <|-- SiteInUseError
+    AccountsError <|-- InvalidTargetError
+    Exception <|-- AssistantError
+    AssistantError <|-- EmptyMessageError
+    AssistantError <|-- InvalidPeriodError
+    AssistantError <|-- AIServiceUnavailableError
+    AccountsAPIMixin ..> AccountsError : handles
+    AssistantAPIMixin ..> AssistantError : handles
+    SiteInUseError ..> ActivityRecord : site still referenced by
+    InvalidTargetError ..> ReductionTarget : validates
+    note for ActivityRecord "Emissions subsystem"
+    note for ReductionTarget "Accounts subsystem, accounts.models.ReductionTarget"
+```
+
+The frontend shows only the `detail` text of these errors. Tests:
+
+```bash
+python -m pytest backend/accounts/tests/test_accounts_exceptions.py backend/assistant/tests/test_assistant_exceptions.py
+```

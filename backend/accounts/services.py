@@ -8,9 +8,11 @@ from decimal import Decimal
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
 
 from core import emissions_data
 
+from .exceptions import InvalidTargetError, LastAdminError, SiteInUseError, WeakPasswordError
 from .models import Alert, AuditLog, Organisation, ReductionTarget, User
 
 AT_RISK_TOLERANCE = Decimal("1.10")
@@ -52,11 +54,19 @@ def _plain(value):
 # Users and organisations ----------------------------------------------------
 
 
+def check_password_strength(password, user):
+    """Run Django's password validators; raise WeakPasswordError with their messages."""
+    try:
+        validate_password(password, user)
+    except ValidationError as exc:
+        raise WeakPasswordError(" ".join(exc.messages)) from exc
+
+
 @transaction.atomic
 def register_organisation(*, organisation_name, username, password, email="", **organisation):
     """Create a company together with its first administrator."""
     user = User(username=username, email=email, role=User.Role.ADMIN)
-    validate_password(password, user)
+    check_password_strength(password, user)
     org = Organisation.objects.create(name=organisation_name, **organisation)
     user.organisation = org
     user.set_password(password)
@@ -67,7 +77,7 @@ def register_organisation(*, organisation_name, username, password, email="", **
 
 def create_member(*, organisation, password, **fields):
     user = User(organisation=organisation, **fields)
-    validate_password(password, user)
+    check_password_strength(password, user)
     user.set_password(password)
     user.save()
     return user
@@ -82,10 +92,34 @@ def ensure_admin_remains(member, *, role=None, is_active=None):
         organisation=member.organisation, role=User.Role.ADMIN, is_active=True
     ).exclude(pk=member.pk)
     if not other_admins.exists():
-        raise ValidationError("An organisation needs at least one active administrator.")
+        raise LastAdminError()
+
+
+@transaction.atomic
+def delete_site(site, actor):
+    """Delete a site with an audit entry; refuse if activity records still use it."""
+    record_audit(actor=actor, action=AuditLog.Action.DELETE, instance=site)
+    try:
+        site.delete()
+    except ProtectedError as exc:
+        # The exception rolls back the transaction, so the audit entry is discarded too.
+        raise SiteInUseError() from exc
 
 
 # Targets and alerts ----------------------------------------------------------
+
+
+def check_target(organisation, *, scope, baseline_year, target_year, exclude=None):
+    """Raise InvalidTargetError unless the target's years work for this organisation."""
+    if target_year <= baseline_year:
+        raise InvalidTargetError("The target year must be after the baseline year.")
+    duplicates = ReductionTarget.objects.filter(
+        organisation=organisation, scope=scope, target_year=target_year
+    )
+    if exclude is not None:
+        duplicates = duplicates.exclude(pk=exclude.pk)
+    if duplicates.exists():
+        raise InvalidTargetError("A target for this scope and year already exists.")
 
 
 @dataclass(frozen=True)

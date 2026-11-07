@@ -69,7 +69,8 @@ def test_member_password_is_validated(api_for, admin_user):
     response = api_for(admin_user).post(
         "/api/accounts/members/", {"username": "eddie", "password": "password"}
     )
-    assert response.status_code == 400 and "password" in response.json()
+    assert response.status_code == 400
+    assert response.json()["error"] == "weak_password"
 
 
 def test_deleting_member_deactivates_instead(api_for, admin_user, viewer_user):
@@ -82,8 +83,11 @@ def test_deleting_member_deactivates_instead(api_for, admin_user, viewer_user):
 def test_last_admin_cannot_be_demoted_or_deactivated(api_for, admin_user):
     client = api_for(admin_user)
     url = f"/api/accounts/members/{admin_user.pk}/"
-    assert client.patch(url, {"role": "viewer"}).status_code == 400
-    assert client.delete(url).status_code == 400
+    for response in (client.patch(url, {"role": "viewer"}), client.delete(url)):
+        assert response.status_code == 409
+        assert response.json()["error"] == "last_admin"
+    admin_user.refresh_from_db()
+    assert admin_user.role == "admin" and admin_user.is_active
 
 
 def test_admin_can_step_down_when_another_admin_exists(api_for, admin_user, make_member):

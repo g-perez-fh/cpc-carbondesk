@@ -81,12 +81,18 @@ async def delete(path, **kwargs):
 
 
 def error_message(response):
-    """Turn a DRF error body such as {"field": ["msg"]} into one sentence."""
+    """Turn a DRF error body such as {"field": ["msg"]} into one sentence.
+
+    Subsystem errors ({"error": code, "detail": message}) show only their message.
+    """
     fallback = f"Request failed ({response.status_code})."
     try:
-        return _flatten(response.json()) or fallback
+        body = response.json()
     except ValueError:
         return fallback
+    if isinstance(body, dict) and "error" in body and "detail" in body:
+        return str(body["detail"])
+    return _flatten(body) or fallback
 
 
 def _flatten(body):

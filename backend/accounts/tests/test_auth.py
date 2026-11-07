@@ -29,7 +29,8 @@ def test_register_rejects_weak_password_and_duplicate_username(admin_user):
         {"organisation_name": "X", "username": "new", "password": "123"},
         format="json",
     )
-    assert weak.status_code == 400 and "password" in weak.json()
+    assert weak.status_code == 400
+    assert weak.json()["error"] == "weak_password" and weak.json()["field"] == "password"
 
     taken = client.post(
         "/api/accounts/register/",
