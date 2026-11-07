@@ -23,7 +23,7 @@ PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
 |---|---|---|
 | Harib Khalid | 7225862 | Analytics Dashboard & Reporting |
 | Guillermo Pérez Pérez | [to be added] | Emissions Data & Calculation |
-| Omotunde Sholola Ganiyu | [to be added] | Users, Organisation & Targets; AI Sustainability Assistant |
+| Omotunde Sholola Ganiyu | 7227720 | Users, Organisation & Targets; AI Sustainability Assistant |
 
 CarbonDesk is our Compact Programming capstone project at FH Dortmund. We are
 building a web platform for small and medium companies to track Scope 1, 2,
@@ -393,6 +393,173 @@ attributes and operations are the public surface. `ActivityRecord`,
 depends on but doesn't own - see the note on each. Tests live in
 `backend/analytics/tests/test_domain.py` and run without a database:
 `python -m pytest backend/analytics/tests/test_domain.py`.
+
+## Users, Organisation & Targets and AI Assistant — OOP design (Omotunde, Hometask 1)
+
+`backend/accounts/domain.py` and `backend/assistant/domain.py` are plain-Python
+models of Omotunde's two subsystems: no Django imports, no database access and no
+OpenAI calls, so they can be imported and tested on their own. The Django models,
+services and views are unchanged; these modules mirror their rules in
+framework-free classes for the UML assignment.
+
+Activity data always arrives as the project's shared
+[`ActivityRecord`](#shared-data-model-team-proposal) (`shared/models.py`, kg CO2e):
+`ReductionTarget.setup()` totals `kg_co2e` per year from it, and every assistant
+class reads it. The assistant uses the accounts classes (`Organisation`,
+`ReductionTarget`) directly, so the two subsystems share one interface instead of
+passing their own dicts. Recommendations and chat messages stay plain dicts on
+purpose: they are the assistant's outputs, not a second format for activity data.
+
+```mermaid
+classDiagram
+    class User {
+        - username : str
+        - organisation_id : int
+        - role : str
+        - is_active : bool
+        - permissions : Dict~str, set~
+        + setup(permissions : dict) User
+        + get_role() str
+        + set_role(value : str) void
+        + get_is_active() bool
+        + set_is_active(value : bool) void
+        + is_admin() bool
+        + can(action : str) bool
+    }
+    class Organisation {
+        - id : int
+        - name : str
+        - industry : str
+        - employee_count : int
+        - sites : List~str~
+        - members : List~User~
+        + setup(sites : List~str~, members : List~User~) Organisation
+        + get_name() str
+        + set_name(value : str) void
+        + get_employee_count() int
+        + set_employee_count(value : int) void
+        + add_site(name : str) void
+        + add_member(user : User) void
+        + admins() List~User~
+        + owns(record : ActivityRecord) bool
+    }
+    class ReductionTarget {
+        - organisation_id : int
+        - scope : str
+        - baseline_year : int
+        - baseline_kg_co2e : Decimal
+        - target_year : int
+        - reduction_percent : Decimal
+        - yearly_kg : Dict~int, Decimal~
+        + setup(records : List~ActivityRecord~) ReductionTarget
+        + get_target_year() int
+        + set_target_year(value : int) void
+        + get_reduction_percent() Decimal
+        + set_reduction_percent(value : Decimal) void
+        + get_target_kg_co2e() Decimal
+        + actual_kg_co2e(year : int) Decimal
+        + expected_kg_co2e(year : int) Decimal
+        + status(year : int) str
+    }
+    class AssistantService {
+        - organisation : Organisation
+        - engine : RecommendationEngine
+        - records : List~ActivityRecord~
+        - targets : List~ReductionTarget~
+        + setup(records : List~ActivityRecord~, targets : List~ReductionTarget~) AssistantService
+        + get_organisation() Organisation
+        + set_organisation(value : Organisation) void
+        + records_for_year(year : int) List~ActivityRecord~
+        + answer(question : str, year : int) str
+        + monthly_summary(month : str) str
+    }
+    class RecommendationEngine {
+        - limit : int
+        - catalogue : List~dict~
+        + setup(catalogue : List~dict~) RecommendationEngine
+        + get_limit() int
+        + set_limit(value : int) void
+        + recommend(records : List~ActivityRecord~) List~dict~
+    }
+    class ChatSession {
+        - user_id : int
+        - title : str
+        - history_limit : int
+        - messages : List~dict~
+        + setup(messages : List~dict~) ChatSession
+        + get_title() str
+        + set_title(value : str) void
+        + add_message(role : str, content : str) void
+        + recent_history() List~dict~
+    }
+    class MonthlySummaryBuilder {
+        - organisation_name : str
+        - month : str
+        - current : Dict~int, Decimal~
+        - previous : Dict~int, Decimal~
+        + setup(records : List~ActivityRecord~) MonthlySummaryBuilder
+        + get_month() str
+        + set_month(value : str) void
+        + total_kg_co2e() Decimal
+        + change_percent() Decimal
+        + largest_scope() int
+        + build() str
+    }
+    class ActivityRecord {
+        <<interface>>
+        + organisation_id : int
+        + site : str
+        + date : date
+        + scope : int
+        + kg_co2e : Decimal
+        + get_tco2e() Decimal
+    }
+    class KpiCalculator {
+        <<interface>>
+        + recompute_score() int
+    }
+    class DashboardService {
+        <<interface>>
+        + summary() Dict~int, Decimal~
+    }
+
+    Organisation "1" o-- "0..*" User : members
+    Organisation "1" -- "0..*" ReductionTarget : sets
+    Organisation ..> ActivityRecord : owns()
+    ReductionTarget "1" o-- "0..*" ActivityRecord : totals kg_co2e
+    AssistantService "1" --> "1" Organisation : advises
+    AssistantService "1" *-- "1" RecommendationEngine : engine
+    AssistantService "1" o-- "0..*" ReductionTarget : checks
+    AssistantService "1" o-- "0..*" ActivityRecord : holds
+    AssistantService ..> MonthlySummaryBuilder : creates
+    RecommendationEngine ..> ActivityRecord : reads
+    MonthlySummaryBuilder ..> ActivityRecord : reads
+    ChatSession "0..*" --> "1" User : belongs to
+    KpiCalculator ..> ReductionTarget : scores against
+    DashboardService ..> Organisation : reads
+    note for ActivityRecord "Emissions subsystem, shared/models.py"
+    note for KpiCalculator "Analytics subsystem"
+    note for DashboardService "Analytics subsystem"
+```
+
+Every attribute marked `-` is private and is read and changed only through an
+`@property` getter/setter pair (shown as `get_x()`/`set_x()`) that validates the
+value and raises `ValueError` or `TypeError`. For example, `User.role` must be
+`admin`, `editor` or `viewer`; `ReductionTarget.target_year` must come after
+`baseline_year`; `Organisation.add_member()` refuses users of another organisation;
+`ChatSession` rejects empty or over-long messages; and `MonthlySummaryBuilder.month`
+must look like `YYYY-MM`. `get_target_kg_co2e()` is a read-only computed property.
+Each `setup()` loads what the object works on: permissions, sites and members,
+`ActivityRecord` lists, the measure catalogue or earlier chat messages.
+`ActivityRecord`, `KpiCalculator` and `DashboardService` are interfaces owned by
+other subsystems (see the notes). Analytics reads this subsystem's
+`ReductionTarget` and `Organisation`.
+
+Tests run without a database:
+
+```bash
+python -m pytest backend/accounts/tests/test_accounts_domain.py backend/assistant/tests/test_assistant_domain.py
+```
 
 ## Shared data model (team proposal)
 
