@@ -5,6 +5,7 @@ from . import views
 
 router = SimpleRouter()
 router.register("sites", views.SiteViewSet)
+router.register("departments", views.DepartmentViewSet)
 router.register("members", views.MemberViewSet)
 router.register("targets", views.ReductionTargetViewSet)
 router.register("alerts", views.AlertViewSet)

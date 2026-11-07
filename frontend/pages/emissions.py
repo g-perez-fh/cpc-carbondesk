@@ -45,6 +45,7 @@ class EmissionsPage:
     def __init__(self):
         self.factors = []
         self.sites = []
+        self.departments = []
         self.filters = {}
         self.page_number = 1
         self.can_edit = session.can_edit()
@@ -53,7 +54,7 @@ class EmissionsPage:
             if self.can_edit:
                 with ui.row().classes("items-center gap-2"):
                     self.add_button = ui.button(
-                        "Add activity", icon="add", on_click=self.activity_dialog
+                        "Add activity", icon="add", on_click=lambda: self.activity_dialog()
                     )
                     self.add_button.props("unelevated color=teal-9 no-caps")
                     self.import_button = ui.button(
@@ -100,9 +101,9 @@ class EmissionsPage:
                         "text-gray-600"
                     )
                     if self.can_edit:
-                        ui.button("Add factor", icon="add", on_click=self.factor_dialog).props(
-                            "outline color=teal-9 no-caps"
-                        )
+                        ui.button(
+                            "Add factor", icon="add", on_click=lambda: self.factor_dialog()
+                        ).props("outline color=teal-9 no-caps")
                 self.factors_box = ui.column().classes("w-full mt-4")
         self.loading = ui.label("Loading your emissions workspace…").classes("text-gray-500")
 
@@ -113,6 +114,8 @@ class EmissionsPage:
         if not (ok_factors and ok_sites):
             self.loading.set_text("Could not load the workspace. Refresh the page to try again.")
             return
+        ok_departments, departments = await call_api(api.get("accounts/departments/"))
+        self.departments = departments if ok_departments else []
         self.factors, self.sites = factors, sites
         self.site.set_options({0: "All sites", **{s["id"]: s["name"] for s in sites}})
         if self.can_edit:
@@ -259,8 +262,8 @@ class EmissionsPage:
         self.factors_box.clear()
         with self.factors_box:
             ui.label(
-                "Factors are kept as added. Add a new factor for a new source or year; "
-                "saved activities keep their original calculation."
+                "Correct a factor here, then explicitly recalculate linked activities if needed. "
+                "Saved activities keep their original calculation until then."
             ).classes("text-sm text-gray-500")
             if not self.factors:
                 ui.label(
@@ -281,10 +284,21 @@ class EmissionsPage:
                     ui.label(f"Source: {factor['source']} · {factor['year']}").classes(
                         "text-sm text-gray-600 break-all"
                     )
+                    if self.can_edit:
+                        with ui.row():
+                            ui.button(
+                                "Edit factor", on_click=lambda f=factor: self.factor_dialog(f)
+                            ).props("flat no-caps color=teal-9")
+                            ui.button(
+                                "Recalculate activities",
+                                on_click=lambda f=factor: self.recalculate_dialog(f),
+                            ).props("outline no-caps color=teal-9")
 
-    def factor_dialog(self):
+    def factor_dialog(self, factor=None):
         with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl p-6 gap-4"):
-            ui.label("Add an emission factor").classes("text-xl font-semibold")
+            ui.label("Edit emission factor" if factor else "Add an emission factor").classes(
+                "text-xl font-semibold"
+            )
             ui.label(
                 "Use a factor whose unit and category match the activity you want to record."
             ).classes("text-sm text-gray-600")
@@ -324,12 +338,29 @@ class EmissionsPage:
                 "text-xs text-gray-500"
             )
 
+            if factor:
+                name.value = factor["name"]
+                scope.value = factor["scope"]
+                unit.value = factor["unit"]
+                value.value = factor["kg_per_unit"]
+                source.value = factor["source"]
+                year.value = str(factor["year"])
+                demo.value = factor["is_demo"]
+                scope.disable()
+                unit.disable()
+                ui.label("Saving does not recalculate existing activities.").classes(
+                    "text-amber-800"
+                )
+
             async def save():
                 save_button.disable()
                 try:
                     ok, result = await call_api(
-                        api.post(
-                            "emissions/factors/",
+                        api.request(
+                            "PATCH" if factor else "POST",
+                            f"emissions/factors/{factor['id']}/"
+                            if factor
+                            else "emissions/factors/",
                             json={
                                 "name": name.value,
                                 "scope": scope.value,
@@ -340,7 +371,7 @@ class EmissionsPage:
                                 "is_demo": demo.value,
                             },
                         ),
-                        "Factor added",
+                        "Factor saved",
                     )
                     if ok:
                         dialog.close()
@@ -351,6 +382,39 @@ class EmissionsPage:
             with ui.row().classes("w-full justify-end"):
                 ui.button("Cancel", on_click=dialog.close).props("flat no-caps color=grey-8")
                 save_button = ui.button("Save factor", on_click=save).props(
+                    "unelevated no-caps color=teal-9"
+                )
+        dialog.open()
+
+    def recalculate_dialog(self, factor):
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl p-6 gap-4"):
+            ui.label("Recalculate linked activities?").classes("text-xl font-semibold")
+            ui.label(f"{factor['name']}: {factor['kg_per_unit']} kg CO₂e/{factor['unit']}")
+            ui.label(
+                "This applies the factor above to all linked company activities, across all dates "
+                "and sites. Totals will change. Previous calculations remain in the audit log."
+            )
+
+            async def confirm():
+                button.disable()
+                try:
+                    ok, result = await call_api(
+                        api.post(
+                            f"emissions/factors/{factor['id']}/recalculate/",
+                            json={"factor": factor},
+                        )
+                    )
+                    if ok:
+                        dialog.close()
+                        ui.notify(f"Recalculated {result['updated']} activities", type="positive")
+                        self.page_number = 1
+                        await self.load()
+                finally:
+                    button.enable()
+
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
+                button = ui.button("Recalculate", on_click=confirm).props(
                     "unelevated no-caps color=teal-9"
                 )
         dialog.open()
@@ -374,7 +438,7 @@ class EmissionsPage:
             ui.label("Import activities from CSV").classes("text-xl font-semibold")
             ui.label(
                 "Required columns: date, description, site, factor, quantity, unit. "
-                "Add factor_year when several factors share a name."
+                "Add factor_year when several factors share a name; department is optional."
             ).classes("text-sm text-gray-600")
             ui.label(
                 "Dates use YYYY-MM-DD. Site and factor names must match this company exactly. "
@@ -390,7 +454,7 @@ class EmissionsPage:
                 try:
                     result = await api.post(
                         "emissions/activities/import/",
-                        files={"file": (event.name, event.content.read(), "text/csv")},
+                        files={"file": (event.file.name, await event.file.read(), "text/csv")},
                     )
                 except api.ApiError as exc:
                     ui.notify(str(exc), type="negative", multi_line=True)
@@ -407,31 +471,45 @@ class EmissionsPage:
                 ui.button("Close", on_click=dialog.close).props("flat no-caps color=grey-8")
         dialog.open()
 
-    def activity_dialog(self):
+    def activity_dialog(self, record=None):
         if not self.factors or not self.sites:
             self.setup_needed_dialog("activity")
             return
-        factors = {f["id"]: f for f in self.factors}
+        factors = {f["id"]: dict(f) for f in self.factors}
+        if record:
+            factors[record["factor"]].update(
+                kg_per_unit=record["factor_value"],
+                unit=record["unit"],
+                source=record["factor_source"],
+                year=record["factor_year"],
+                scope=record["scope"],
+            )
         with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl p-6 gap-4"):
-            ui.label("Record an activity").classes("text-xl font-semibold")
+            ui.label("Edit activity" if record else "Record an activity").classes(
+                "text-xl font-semibold"
+            )
             ui.label("The selected factor determines the scope, unit and calculation.").classes(
                 "text-sm text-gray-600"
             )
             description = (
-                ui.input("Activity description", placeholder="e.g. October office electricity")
+                ui.input(
+                    "Activity description",
+                    value=record["description"] if record else "",
+                    placeholder="e.g. October office electricity",
+                )
                 .props("outlined dense")
                 .classes("w-full")
             )
             with ui.row().classes("w-full gap-3"):
                 day = (
-                    ui.input("Activity date", value=str(date.today()))
+                    ui.input("Activity date", value=record["date"] if record else str(date.today()))
                     .props("type=date outlined dense")
                     .classes("grow")
                 )
                 site = (
                     ui.select(
                         {s["id"]: s["name"] for s in self.sites},
-                        value=self.sites[0]["id"],
+                        value=record["site"] if record else self.sites[0]["id"],
                         label="Site",
                     )
                     .props("outlined dense")
@@ -443,15 +521,26 @@ class EmissionsPage:
                         f["id"]: f"{f['name']} · {f['year']}" + (" · Demo" if f["is_demo"] else "")
                         for f in self.factors
                     },
-                    value=self.factors[0]["id"],
+                    value=record["factor"] if record else self.factors[0]["id"],
                     label="Emission factor",
                 )
                 .props("outlined dense")
                 .classes("w-full")
             )
+            department = (
+                ui.select(
+                    {0: "No department", **{d["id"]: d["name"] for d in self.departments}},
+                    value=(record.get("department") or 0) if record else 0,
+                    label="Department",
+                )
+                .classes("w-full")
+                .props("outlined dense")
+            )
             details = ui.label().classes("text-sm text-gray-600 break-all")
             quantity = (
-                ui.input("Quantity", placeholder="e.g. 100")
+                ui.input(
+                    "Quantity", value=record["quantity"] if record else "", placeholder="e.g. 100"
+                )
                 .props("outlined dense inputmode=decimal")
                 .classes("w-full")
             )
@@ -473,6 +562,7 @@ class EmissionsPage:
                     "factor": factor.value,
                     "quantity": quantity.value,
                     "unit": factors[factor.value]["unit"],
+                    **({"activity": record["id"]} if record else {}),
                 }
 
             async def calculate():
@@ -492,8 +582,14 @@ class EmissionsPage:
                         "description": description.value,
                         "date": day.value,
                         "site": site.value,
+                        "department": department.value or None,
                     }
-                    ok, result = await call_api(api.post("emissions/activities/", json=data))
+                    operation = (
+                        api.patch(f"emissions/activities/{record['id']}/", json=data)
+                        if record
+                        else api.post("emissions/activities/", json=data)
+                    )
+                    ok, result = await call_api(operation)
                     if ok:
                         dialog.close()
                         ui.notify(f"Activity saved · {kg(result['kg_co2e'])}", type="positive")
@@ -539,5 +635,52 @@ class EmissionsPage:
             ui.label(
                 "Rounded to 0.01 kg CO₂e. The factor inputs are preserved with this record."
             ).classes("text-sm text-gray-500")
-            ui.button("Close", on_click=dialog.close).props("flat no-caps color=teal-9")
+            with ui.row().classes("w-full justify-end gap-2"):
+                if self.can_edit:
+
+                    def edit():
+                        dialog.close()
+                        self.activity_dialog(record)
+
+                    def delete():
+                        dialog.close()
+                        self.delete_dialog(record)
+
+                    ui.button("Edit activity", icon="edit", on_click=edit).props(
+                        "outline no-caps color=teal-9"
+                    )
+                    ui.button("Delete activity", icon="delete", on_click=delete).props(
+                        "flat no-caps color=negative"
+                    )
+                ui.button("Close", on_click=dialog.close).props("flat no-caps color=teal-9")
+        dialog.open()
+
+    def delete_dialog(self, record):
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md p-6 gap-4"):
+            ui.label("Delete this activity?").classes("text-xl font-semibold")
+            ui.label(record["description"]).classes("font-medium")
+            ui.label(f"{record['date']} · {kg(record['kg_co2e'])}")
+            ui.label(
+                "This removes the activity from company totals. Its details remain in the "
+                "audit history, but this action cannot be undone here."
+            ).classes("text-sm text-gray-600")
+
+            async def confirm():
+                delete_button.disable()
+                try:
+                    ok, _ = await call_api(
+                        api.delete(f"emissions/activities/{record['id']}/"), "Activity deleted"
+                    )
+                    if ok:
+                        dialog.close()
+                        self.page_number = 1
+                        await self.load_records()
+                finally:
+                    delete_button.enable()
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=dialog.close).props("flat no-caps color=grey-8")
+                delete_button = ui.button("Delete activity", on_click=confirm).props(
+                    "unelevated no-caps color=negative"
+                )
         dialog.open()

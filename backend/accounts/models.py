@@ -42,6 +42,28 @@ class Site(models.Model):
         return self.name
 
 
+class Department(models.Model):
+    """A company department available for activity classification."""
+
+    organisation = models.ForeignKey(
+        Organisation, on_delete=models.CASCADE, related_name="departments"
+    )
+    name = models.CharField(max_length=120)
+    location = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "name"], name="unique_department_name_per_organisation"
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class User(AbstractUser):
     """Project user. Members belong to one organisation with one role."""
 

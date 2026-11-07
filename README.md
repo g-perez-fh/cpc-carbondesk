@@ -239,7 +239,8 @@ development progresses.
    quantity. Preview the calculation, then save it. Alternatively, choose
    **Import CSV** to add many activities from one file.
 5. Browse the records, filter by date/scope/site, and open **Details** to inspect
-   the inputs used. Saved totals also feed the assistant and reduction targets.
+   the inputs used. Admins/editors can choose **Edit activity** or **Delete activity**
+   here. Deletion asks for confirmation. Saved totals also feed the assistant and targets.
 
 For a reproducible example, use a separate demo organisation and add a factor
 named **Demo electricity**, Scope 2, unit `kWh`, value `0.4`, source **Synthetic
@@ -252,13 +253,28 @@ assistant and targets; keep demo activity separate from real company data.
 ### Endpoint behavior
 
 - `GET/POST /api/emissions/factors/`: list or add company factors. Each new
-  source/version is a separate factor; update/delete is not exposed yet.
+  source/version can be a separate factor. PATCH/PUT on `factors/<id>/` corrects
+  a factor while keeping its unit and scope fixed. Saved activities stay unchanged.
+- `POST /api/emissions/factors/<id>/recalculate/`: explicitly apply the current
+  factor to all linked company activities, across all dates/sites. Send the latest
+  GET factor object as `{"factor": {...}}`; stale confirmations return HTTP 409.
+  The operation is atomic and retains before/after activity snapshots in the audit log.
+  Admins/editors can update and recalculate; viewers cannot. Factor deletion is not exposed.
 - `POST /api/emissions/preview/`: send `factor`, `quantity`, and `unit`; receive
-  `kg_co2e` without saving a record.
+  `kg_co2e` without saving a record. Include an `activity` ID when editing to
+  preview its saved factor inputs if the factor selection is unchanged.
 - `GET/POST /api/emissions/activities/`: list or create records. Creation accepts
   `description`, `date` (`YYYY-MM-DD`), `factor` ID, `site` ID, `quantity`, and
   `unit`. The backend assigns the company, creator, scope, and result.
-- `GET /api/emissions/activities/<id>/`: inspect the original calculation inputs.
+- `GET /api/emissions/activities/<id>/`: inspect the saved calculation inputs.
+- `PATCH/PUT /api/emissions/activities/<id>/`: correct an activity and recalculate.
+  PATCH accepts only changed fields; PUT requires all entry fields. When selecting
+  a factor with a different unit, send that unit too.
+- `DELETE /api/emissions/activities/<id>/`: remove an activity from totals (HTTP 204).
+  Admins/editors may edit/delete; viewers cannot. Before/after edit snapshots and
+  deleted record details remain in the existing audit log, atomically with the change.
+  Edits keep the saved factor version unless a different factor is selected.
+  The creator and creation date remain unchanged. There is no restore button.
 - `POST /api/emissions/activities/import/`: upload a CSV file in the `file`
   multipart field. The response reports how many records were created.
 - `GET /api/emissions/summary/`: record count, demo count, total and scope totals.
@@ -275,7 +291,8 @@ allow eight. Zero is valid. Units must match exactly: conversions are not implic
 Activity dates cannot be in the future. The calculation uses `Decimal` and rounds
 half up to **0.01 kg CO2e** once per record; totals sum those saved results.
 Records preserve the factor name, scope, value, unit, source, year, and demo flag
-used at creation. Writes use the existing audit log.
+used in the latest calculation. Recalculation replaces these snapshots while
+retaining the previous values in the audit log. Writes use the existing audit log.
 
 ### CSV import
 
@@ -290,10 +307,6 @@ are shown). Imports are limited to 5 MB and 5,000 data rows. Each imported recor
 rules as manual entry and receives its own audit-log entry. The import does not
 check for duplicate activities, so re-uploading a file creates the rows again.
 A template is available from the import dialog.
-
-Streaming, activity editing/deletion, factor-change recalculation, and department
-links are follow-up work. This slice uses the existing PostgreSQL/SQLite setup;
-MySQL support for Hometask 3 is still pending.
 
 ## Hometask 2: Stream processing
 
@@ -565,3 +578,88 @@ The demo uses a synthetic factor: 100 kWh × 0.4 gives 40.00 kg CO2e / 0.04 tonn
 The older standalone emissions diagram and recording script using `+` and dicts
 must be updated to this shared contract before recording; they are not copied
 into this integration branch.
+Department links and the local streaming pipeline are available below.
+PostgreSQL/SQLite remain the default setup; Hometask 3 has a separate MySQL stack.
+
+### Correcting a factor
+
+On **Emissions → Emission factors**, select **Edit factor** and save the correction.
+New activities use the corrected value; existing activities keep their saved inputs.
+Choose **Recalculate activities** and confirm to update all linked records and totals.
+Use a new factor for a different unit, scope, or a separate publication/version.
+Editing an existing activity with its original factor continues to use its saved
+calculation inputs until explicit recalculation. Its preview follows the same rule.
+
+### Departments
+
+Administrators can manage departments on the Organisation page. Activities have
+an optional company department. CSV files accept an optional `department` column
+matching the department name exactly. Existing activities remain unassigned.
+Referenced departments cannot be deleted; viewers and editors cannot manage them.
+
+### Local telemetry pipeline
+
+`backend/emissions/streaming.py` provides `ActivityStream`, `ScopeFilter`,
+`EmissionTransformer`, and composable `Pipeline` classes for Homework 2.
+Compose stages with `|` using shared `ActivityEvent` objects, as shown in
+**Emissions integration with the shared stream** above. This local pipeline
+has no broker or persistence.
+
+### Optional database backups
+
+`docker compose -f compose.yaml -f compose.backup.yaml up -d --build` enables
+PostgreSQL backups at startup and every 24 hours while the backup container runs.
+Dumps go into the `backups` named volume. Check container logs for errors.
+Backups cover the database, not uploads. There is no retention policy or off-site
+copy. Restore a dump with `pg_restore` into a separate empty database to validate
+recovery before relying on this workflow.
+
+## Homework recording setup
+
+Guillermo's three explicit OOP classes are `CO2eCalculator`, `CsvImporter`, and
+`ScopeFilter`. Each initializes its state in a constructor and provides validating
+setters and getters. The scope filter is also reused in the streaming assignment.
+Run the synthetic OOP and streaming demonstration from the repository root:
+
+```bash
+PYTHONPATH=backend:. python examples/homework_demo.py
+```
+
+### MySQL for Hometask 3
+
+The separate homework stack leaves the default PostgreSQL setup unchanged:
+
+```bash
+docker compose -f compose.mysql.yaml up -d --build
+docker compose -f compose.mysql.yaml logs backend
+```
+
+Stop other servers on ports 8000 and 8080 first. Open http://localhost:8080,
+register a demo company, add a site and synthetic factor, and save an activity.
+Inspect persistence using the database client (enter the local homework password
+from `compose.mysql.yaml` at the prompt):
+
+```bash
+docker compose -f compose.mysql.yaml exec db mysql -u carbondesk -p carbondesk
+```
+
+```sql
+SELECT id, description, quantity, kg_co2e FROM emissions_activityrecord;
+```
+
+This uses MySQL 8.4 and Django's MySQL backend with mysqlclient. The driver is an
+optional dependency in `requirements/mysql.txt`; the homework Dockerfile installs
+its native build prerequisites. Local credentials are for this isolated demo only.
+`docker compose -f compose.mysql.yaml down` preserves the MySQL data volume.
+
+### Submission checklist
+
+Team names and subsystem ownership are listed under **Who does what** above.
+For each assignment branch, add the rendered LaTeX class diagrams and the direct
+unified team-video link. Those artifacts are intentionally excluded from the
+current implementation commits. The video link is pending recording/upload;
+no placeholder URL represents a completed submission. Each teammate must supply
+their own implemented class explanation and subsystem error-handling evidence.
+Hometasks 1 and 2 use the user-specified branches `Homeassignment1` and
+`HomeworkAssignment2`. Confirm naming for 3 and 4 against the course submission
+instructions before pushing. No submission branches or videos are published here.

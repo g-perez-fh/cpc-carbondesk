@@ -221,7 +221,7 @@ def test_factor_validation_and_permissions(api_for, admin_user, viewer_user):
     assert AuditLog.objects.filter(action="create").count() == 1
     assert (
         client.patch(f"/api/emissions/factors/{factor.pk}/", {"kg_per_unit": "8"}).status_code
-        == 405
+        == 200
     )
 
 
@@ -273,3 +273,186 @@ def test_pagination_keeps_summary_total_for_all_records(api_for, admin_user, fac
     assert first["next"] and second["previous"]
     assert not {row["id"] for row in first["results"]} & {row["id"] for row in second["results"]}
     assert client.get("/api/emissions/summary/").json()["total_kg_co2e"] == "840.00"
+
+
+@pytest.fixture
+def saved_activity(api_for, admin_user, factor, site):
+    return api_for(admin_user).post("/api/emissions/activities/", payload(factor, site)).json()
+
+
+def test_edit_recalculates_and_keeps_audit_snapshots(api_for, editor_user, saved_activity):
+    client = api_for(editor_user)
+    response = client.patch(
+        f"/api/emissions/activities/{saved_activity['id']}/",
+        {"quantity": "250", "kg_co2e": "999"},
+        format="json",
+    )
+    assert response.status_code == 200
+    assert response.json()["kg_co2e"] == "100.00"
+    audit = AuditLog.objects.get(action="update")
+    assert audit.actor == editor_user
+    assert audit.changes["before"]["kg_co2e"] == "40.00"
+    assert audit.changes["after"]["kg_co2e"] == "100.00"
+    assert client.get("/api/analytics/dashboard/").json()["total_kg_co2e"] == "100.00"
+
+
+def test_description_edit_preserves_saved_factor(api_for, admin_user, factor, saved_activity):
+    factor.kg_per_unit = Decimal("5")
+    factor.save()
+    response = api_for(admin_user).patch(
+        f"/api/emissions/activities/{saved_activity['id']}/", {"description": "Corrected"}
+    )
+    assert response.status_code == 200
+    assert response.json()["factor_value"] == "0.40000000"
+    assert response.json()["kg_co2e"] == "40.00"
+
+
+def test_switch_factor_refreshes_snapshot(api_for, admin_user, organisation, saved_activity):
+    factor = EmissionFactor.objects.create(
+        organisation=organisation,
+        name="Diesel",
+        scope=1,
+        unit="l",
+        kg_per_unit="2",
+        source="Another synthetic example",
+        year=2025,
+        is_demo=True,
+    )
+    response = api_for(admin_user).patch(
+        f"/api/emissions/activities/{saved_activity['id']}/", {"factor": factor.pk, "unit": "l"}
+    )
+    assert response.status_code == 200
+    assert response.json()["kg_co2e"] == "200.00"
+    assert response.json()["scope"] == 1
+    assert response.json()["factor_source"] == factor.source
+
+
+@pytest.mark.parametrize("data", [{"quantity": "-1"}, {"unit": "wrong"}, {"date": "10000-01-01"}])
+def test_invalid_edit_does_not_change_record(api_for, admin_user, saved_activity, data):
+    response = api_for(admin_user).patch(f"/api/emissions/activities/{saved_activity['id']}/", data)
+    assert response.status_code == 400
+    assert ActivityRecord.objects.get(pk=saved_activity["id"]).kg_co2e == Decimal("40")
+    assert not AuditLog.objects.filter(action="update").exists()
+
+
+@pytest.mark.parametrize("method", ["patch", "delete"])
+def test_viewer_cannot_change_activity(api_for, viewer_user, saved_activity, method):
+    response = getattr(api_for(viewer_user), method)(
+        f"/api/emissions/activities/{saved_activity['id']}/", {}
+    )
+    assert response.status_code == 403
+    assert ActivityRecord.objects.filter(pk=saved_activity["id"]).exists()
+
+
+@pytest.mark.parametrize("method", ["patch", "delete"])
+def test_other_company_cannot_change_activity(api_for, saved_activity, method):
+    other = Organisation.objects.create(name="Other")
+    user = User.objects.create(username="other-editor", organisation=other, role="editor")
+    response = getattr(api_for(user), method)(
+        f"/api/emissions/activities/{saved_activity['id']}/", {}
+    )
+    assert response.status_code == 404
+    assert ActivityRecord.objects.filter(pk=saved_activity["id"]).exists()
+
+
+def test_delete_preserves_history_and_removes_totals(api_for, editor_user, saved_activity):
+    client = api_for(editor_user)
+    url = f"/api/emissions/activities/{saved_activity['id']}/"
+    assert client.delete(url).status_code == 204
+    assert client.get(url).status_code == 404
+    audit = AuditLog.objects.get(action="delete")
+    assert audit.changes["before"] == saved_activity
+    assert client.get("/api/emissions/summary/").json()["total_kg_co2e"] == "0.00"
+    assert client.get("/api/analytics/dashboard/").json()["record_count"] == 0
+
+
+@pytest.mark.parametrize("method", ["patch", "delete"])
+def test_audit_failure_rolls_back_mutation(
+    api_for, admin_user, saved_activity, monkeypatch, method
+):
+    def fail(**kwargs):
+        raise RuntimeError("Audit unavailable")
+
+    monkeypatch.setattr("emissions.views.record_audit", fail)
+    with pytest.raises(RuntimeError, match="Audit unavailable"):
+        getattr(api_for(admin_user), method)(
+            f"/api/emissions/activities/{saved_activity['id']}/", {"quantity": "200"}
+        )
+    assert ActivityRecord.objects.get(pk=saved_activity["id"]).kg_co2e == Decimal("40")
+
+
+@pytest.fixture
+def editor_user(make_member):
+    return make_member("editor", User.Role.EDITOR)
+
+
+def test_factor_correction_and_explicit_recalculation(api_for, admin_user, factor, saved_activity):
+    client = api_for(admin_user)
+    url = f"/api/emissions/factors/{factor.pk}/"
+    corrected = client.patch(url, {"kg_per_unit": "0.8", "source": "Corrected source"}).json()
+    record = ActivityRecord.objects.get(pk=saved_activity["id"])
+    assert record.kg_co2e == Decimal("40")
+    preview = client.post(
+        "/api/emissions/preview/",
+        {"activity": record.pk, "factor": factor.pk, "quantity": "100", "unit": "kWh"},
+    )
+    assert preview.json()["kg_co2e"] == "40.00"
+    response = client.post(url + "recalculate/", {"factor": corrected}, format="json")
+    assert response.status_code == 200, response.data
+    assert response.json()["updated"] == 1
+    record.refresh_from_db()
+    assert record.kg_co2e == Decimal("80")
+    assert record.factor_source == "Corrected source"
+    audit = AuditLog.objects.get(changes__reason="factor_recalculation")
+    assert audit.changes["before"]["kg_co2e"] == "40.00"
+    assert audit.changes["after"]["kg_co2e"] == "80.00"
+    assert (
+        client.post(url + "recalculate/", {"factor": corrected}, format="json").json()["updated"]
+        == 0
+    )
+    assert client.get("/api/analytics/dashboard/").json()["total_kg_co2e"] == "80.00"
+
+
+@pytest.mark.parametrize("change", [{"unit": "l"}, {"scope": 1}, {"kg_per_unit": "-1"}])
+def test_factor_invalid_correction(api_for, admin_user, factor, change):
+    assert (
+        api_for(admin_user).patch(f"/api/emissions/factors/{factor.pk}/", change).status_code == 400
+    )
+
+
+def test_factor_stale_confirmation(api_for, admin_user, factor):
+    client = api_for(admin_user)
+    url = f"/api/emissions/factors/{factor.pk}/"
+    old = client.get(url).json()
+    client.patch(url, {"kg_per_unit": "0.8"})
+    assert client.post(url + "recalculate/", {"factor": old}, format="json").status_code == 409
+
+
+@pytest.mark.parametrize("role", ["viewer", "foreign"])
+def test_factor_write_permissions(api_for, viewer_user, make_member, factor, role):
+    user = (
+        viewer_user
+        if role == "viewer"
+        else make_member(
+            "foreign", User.Role.ADMIN, Organisation.objects.create(name="Other factor company")
+        )
+    )
+    client = api_for(user)
+    url = f"/api/emissions/factors/{factor.pk}/"
+    expected = 403 if role == "viewer" else 404
+    assert client.patch(url, {"kg_per_unit": "1"}).status_code == expected
+    assert client.post(url + "recalculate/", {}, format="json").status_code == expected
+
+
+def test_recalculation_failure_rolls_back(api_for, admin_user, factor, saved_activity, monkeypatch):
+    client = api_for(admin_user)
+    url = f"/api/emissions/factors/{factor.pk}/"
+    corrected = client.patch(url, {"kg_per_unit": "0.8"}).json()
+
+    def fail(**kwargs):
+        raise RuntimeError("Audit unavailable")
+
+    monkeypatch.setattr("emissions.views.record_audit", fail)
+    with pytest.raises(RuntimeError):
+        client.post(url + "recalculate/", {"factor": corrected}, format="json")
+    assert ActivityRecord.objects.get(pk=saved_activity["id"]).kg_co2e == Decimal("40")

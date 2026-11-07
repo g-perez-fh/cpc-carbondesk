@@ -124,6 +124,48 @@ async def organisation_section(box, is_admin):
 
                     ui.button("Add site", on_click=add_site)
 
+        ok_departments, departments = await call_api(api.get("accounts/departments/"))
+        if not ok_departments:
+            return
+        with ui.card().classes("w-full"):
+            section_title("Departments")
+            if not departments:
+                ui.label("No departments added yet.").classes("text-gray-500")
+            for department in departments:
+                with ui.row().classes("w-full items-center"):
+                    ui.icon("apartment")
+                    ui.label(department["name"]).classes("font-medium")
+                    ui.label(department["location"]).classes("text-gray-500")
+                    ui.space()
+                    if is_admin:
+
+                        async def remove(department_id=department["id"]):
+                            ok, _ = await call_api(
+                                api.delete(f"accounts/departments/{department_id}/"),
+                                "Department removed",
+                            )
+                            if ok:
+                                await reload()
+
+                        ui.button(icon="delete", on_click=remove).props("flat round dense")
+            if is_admin:
+                with ui.row().classes("w-full items-end"):
+                    department_name = ui.input("New department name")
+                    department_location = ui.input("Location")
+
+                    async def add_department():
+                        payload = {
+                            "name": department_name.value,
+                            "location": department_location.value,
+                        }
+                        ok, _ = await call_api(
+                            api.post("accounts/departments/", json=payload), "Department added"
+                        )
+                        if ok:
+                            await reload()
+
+                    ui.button("Add department", on_click=add_department)
+
 
 # Team -----------------------------------------------------------------------------
 

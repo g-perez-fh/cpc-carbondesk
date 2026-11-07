@@ -115,3 +115,13 @@ def test_configuration_and_rounding():
     result = list([event(quantity=Decimal("2.5125"))] | transformer())[0]
     assert result.kg_co2e == Decimal("1.01")
     assert list([] | transformer()) == []
+
+
+def test_csv_text_accessors():
+    from emissions.csv_import import CsvImporter
+
+    importer = CsvImporter("original", sites_by_name={}, factors_by_name={})
+    importer.set_text("replacement")
+    with pytest.raises(EmissionsError):
+        importer.set_text(None)
+    assert importer.get_text() == "replacement"

@@ -1,15 +1,19 @@
 from decimal import Decimal
 
 from django.db import transaction
-from rest_framework import mixins, viewsets
+from django.shortcuts import get_object_or_404
+from rest_framework import mixins, serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.mixins import OrganisationScopedMixin
+from accounts.models import AuditLog
 from accounts.permissions import CanEditDataOrReadOnly, IsOrganisationMember
+from accounts.services import record_audit
 
+from .calculations import EmissionsError
 from .models import ActivityRecord, EmissionFactor
 from .serializers import (
     ActivityFilterSerializer,
@@ -17,7 +21,7 @@ from .serializers import (
     CalculationSerializer,
     EmissionFactorSerializer,
 )
-from .services import import_activities, scope_totals
+from .services import import_activities, scope_totals, update_activity
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_REPORTED_ERRORS = 100
@@ -26,11 +30,12 @@ MAX_REPORTED_ERRORS = 100
 class EmissionFactorViewSet(
     OrganisationScopedMixin,
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    """Factors are added as new versions; existing factors are not edited in this slice."""
+    """Correct factors without silently changing saved activity calculations."""
 
     queryset = EmissionFactor.objects.all()
     serializer_class = EmissionFactorSerializer
@@ -39,6 +44,51 @@ class EmissionFactorViewSet(
     @transaction.atomic
     def perform_create(self, serializer):
         super().perform_create(serializer)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    def get_object(self):
+        instance = super().get_object()
+        if self.action in {"update", "partial_update", "recalculate"}:
+            return get_object_or_404(self.get_queryset().select_for_update(), pk=instance.pk)
+        return instance
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def recalculate(self, request, pk=None):
+        factor = self.get_object()
+        # Reject stale confirmation dialogs after another member corrects this factor.
+        expected = EmissionFactorSerializer(factor).data
+        if request.data.get("factor") != dict(expected):
+            return Response(
+                {"detail": "The factor changed. Refresh and confirm again."}, status=409
+            )
+        records = (
+            ActivityRecord.objects.select_for_update()
+            .filter(organisation=request.user.organisation, factor=factor)
+            .order_by("pk")
+        )
+        updated = 0
+        for record in records:
+            before = dict(ActivityRecordSerializer(record).data)
+            try:
+                update_activity(record, factor=factor, refresh_factor=True)
+            except EmissionsError as exc:
+                raise serializers.ValidationError(
+                    {"detail": f"Activity {record.pk}: {exc}"}
+                ) from exc
+            after = dict(ActivityRecordSerializer(record).data)
+            if before != after:
+                record_audit(
+                    actor=request.user,
+                    action=AuditLog.Action.UPDATE,
+                    instance=record,
+                    changes={"reason": "factor_recalculation", "before": before, "after": after},
+                )
+                updated += 1
+        return Response({"updated": updated})
 
 
 class ActivityPagination(PageNumberPagination):
@@ -63,6 +113,8 @@ def filtered_activities(request):
 class ActivityRecordViewSet(
     OrganisationScopedMixin,
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
@@ -81,6 +133,42 @@ class ActivityRecordViewSet(
     @transaction.atomic
     def perform_create(self, serializer):
         super().perform_create(serializer)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)
+
+    def get_object(self):
+        if self.action in {"update", "partial_update", "destroy"}:
+            # Lock only the activity row, avoiding locks on nullable related rows.
+            instance = super().get_object()
+            return get_object_or_404(ActivityRecord.objects.select_for_update(), pk=instance.pk)
+        return super().get_object()
+
+    def perform_update(self, serializer):
+        before = dict(self.get_serializer(serializer.instance).data)
+        instance = serializer.save()
+        after = dict(self.get_serializer(instance).data)
+        if before != after:
+            record_audit(
+                actor=self.request.user,
+                action=AuditLog.Action.UPDATE,
+                instance=instance,
+                changes={"before": before, "after": after},
+            )
+
+    def perform_destroy(self, instance):
+        record_audit(
+            actor=self.request.user,
+            action=AuditLog.Action.DELETE,
+            instance=instance,
+            changes={"before": dict(self.get_serializer(instance).data)},
+        )
+        instance.delete()
 
     @action(detail=False, methods=["post"], url_path="import")
     def import_csv(self, request):
