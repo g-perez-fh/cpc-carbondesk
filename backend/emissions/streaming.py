@@ -1,36 +1,20 @@
-"""Small lazy pipeline for locally supplied operational telemetry."""
+"""Validated emissions stages using the team's shared event and pipeline contract.
 
-from abc import ABC, abstractmethod
-from decimal import Decimal
+Factors are keyed by ActivityEvent.category and contain scope, unit and
+kg_per_unit. Results remain ActivityEvent objects; tco2e is their shared
+read-only conversion property. Unknown factors raise EmissionsError instead of
+silently passing through uncalculated events.
+"""
+
+from dataclasses import replace
+
+from stream_processing.base import EventSource, Pipeline, StreamProcessor
 
 from .calculations import CO2eCalculator, EmissionsError
 
-
-class StreamProcessor(ABC):
-    @abstractmethod
-    def process(self, record):
-        """Return a processed record, or None to filter it out."""
-
-    def __add__(self, other):
-        return Pipeline(self, other)
-
-
-class Pipeline(StreamProcessor):
-    def __init__(self, *processors):
-        self.processors = processors
-
-    def process(self, record):
-        for processor in self.processors:
-            if record is None:
-                break
-            record = processor.process(record)
-        return record
-
-    def run(self, records):
-        for record in records:
-            result = self.process(record)
-            if result is not None:
-                yield result
+# Reuse the team's iterator rather than maintaining a second stream framework.
+ActivityStream = EventSource
+__all__ = ["ActivityStream", "EmissionTransformer", "Pipeline", "ScopeFilter", "StreamProcessor"]
 
 
 class ScopeFilter(StreamProcessor):
@@ -46,35 +30,36 @@ class ScopeFilter(StreamProcessor):
             raise EmissionsError("Scopes must be 1, 2 or 3.")
         self._scopes = values
 
-    def process(self, record):
-        if record.get("scope") not in {1, 2, 3}:
-            raise EmissionsError("Each event needs a valid scope.")
-        return record if record["scope"] in self._scopes else None
+    def process(self, events):
+        for event in events:
+            if event.scope not in {1, 2, 3}:
+                raise EmissionsError("Each event needs a valid scope.")
+            if event.scope in self._scopes:
+                yield event
 
 
 class EmissionTransformer(StreamProcessor):
     def __init__(self, factors):
-        self.factors = dict(factors)
+        self._factors = {}
+        for category, factor in factors.items():
+            try:
+                scope = factor["scope"]
+                calculator = CO2eCalculator(factor["kg_per_unit"], factor["unit"])
+            except (KeyError, TypeError) as exc:
+                raise EmissionsError("Factor needs scope, unit and kg_per_unit.") from exc
+            if scope not in {1, 2, 3}:
+                raise EmissionsError("Factor scope must be 1, 2 or 3.")
+            self._factors[category] = (scope, calculator)
 
-    def process(self, record):
-        try:
-            factor = self.factors[record["factor"]]
-            if factor["scope"] != record["scope"]:
+    def process(self, events):
+        for event in events:
+            try:
+                scope, calculator = self._factors[event.category]
+            except KeyError as exc:
+                raise EmissionsError(f"No factor for category '{event.category}'.") from exc
+            if event.scope != scope:
                 raise EmissionsError("Event scope does not match its factor.")
-            kg = CO2eCalculator(factor["kg_per_unit"], factor["unit"]).calculate(
-                record["quantity"], record["unit"]
-            )
-        except (KeyError, TypeError) as exc:
-            raise EmissionsError("Event or factor is missing required fields.") from exc
-        return dict(record, tonnes_co2e=kg / Decimal("1000"))
-
-
-class ActivityStream:
-    def __init__(self, events):
-        self.events = iter(events)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return next(self.events)
+            result = calculator.calculate(event.quantity, event.unit)
+            # Keep identity, organisation, date, site and telemetry metadata intact.
+            # A fresh event allows another pipeline to reuse the original input.
+            yield replace(event, factor_value=calculator.get_factor(), kg_co2e=result)

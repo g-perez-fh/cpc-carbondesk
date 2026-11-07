@@ -1,8 +1,12 @@
-"""Run with PYTHONPATH=backend python examples/homework_demo.py."""
+"""Run with PYTHONPATH=backend:. python examples/homework_demo.py."""
+
+from datetime import datetime
+from decimal import Decimal
 
 from emissions.calculations import CO2eCalculator
 from emissions.csv_import import CsvImporter
 from emissions.streaming import ActivityStream, EmissionTransformer, ScopeFilter
+from stream_processing.base import ActivityEvent
 
 calculator = CO2eCalculator("0.4", "kWh")
 calculator.set_factor("0.4", "kWh")
@@ -17,9 +21,17 @@ filter_step.set_scopes([2])
 print("Selected scopes:", filter_step.get_scopes())
 factors = {"demo": {"scope": 2, "kg_per_unit": "0.4", "unit": "kWh"}}
 events = [
-    {"scope": 1, "factor": "filtered", "quantity": "50", "unit": "l"},
-    {"scope": 2, "factor": "demo", "quantity": "100", "unit": "kWh"},
+    ActivityEvent(
+        event_id=str(scope),
+        source="synthetic",
+        timestamp=datetime(2026, 1, 1),
+        scope=scope,
+        category="demo",
+        quantity=Decimal("100"),
+        unit="kWh",
+    )
+    for scope in [1, 2]
 ]
-pipeline = filter_step + EmissionTransformer(factors)
-for result in pipeline.run(ActivityStream(events)):
-    print("Stream result:", result["tonnes_co2e"], "tonnes CO2e")
+pipeline = ActivityStream(events) | filter_step | EmissionTransformer(factors)
+for result in pipeline:
+    print("Stream result:", result.tco2e, "tonnes CO2e")
