@@ -22,7 +22,7 @@ PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
 | Name | Matriculation no. | Subsystem |
 |---|---|---|
 | Harib Khalid | 7225862 | Analytics Dashboard & Reporting |
-| Guillermo Pérez Pérez | [to be added] | Emissions Data & Calculation |
+| Guillermo Pérez Pérez | 7227515 | Emissions Data & Calculation |
 | Omotunde Sholola Ganiyu | 7227720 | Users, Organisation & Targets; AI Sustainability Assistant |
 
 CarbonDesk is our Compact Programming capstone project at FH Dortmund. We are
