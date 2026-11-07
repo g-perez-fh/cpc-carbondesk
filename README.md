@@ -1,5 +1,30 @@
 # CarbonDesk
 
+## Team and project information
+
+**Project:** CarbonDesk, Enterprise Carbon Footprint Tracker & AI Assistant
+**Course:** Python Capstone Project, M.Sc. Digital Transformation, FH Dortmund
+**Lecturer:** Prof. Galyna Tabunshchyk
+**Semester:** Winter 2026/27
+
+CarbonDesk is a web platform that helps small and medium companies measure their
+Scope 1, 2 and 3 greenhouse gas emissions. Users record business activities such as
+fuel use, electricity and business travel, which are converted to CO2e with traceable
+emission factors. A dashboard shows where emissions come from and how they change over
+time, reduction targets are tracked per scope, and an AI assistant explains the results
+and suggests practical ways to reduce emissions.
+
+**Tech stack:** Python 3.13, Django, Django REST Framework, NiceGUI, Plotly,
+PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
+
+### Team overview
+
+| Name | Matriculation no. | Subsystem |
+|---|---|---|
+| Harib Khalid | 7225862 | Analytics Dashboard & Reporting |
+| Guillermo Pérez Pérez | [to be added] | Emissions Data & Calculation |
+| Omotunde Sholola Ganiyu | [to be added] | Users, Organisation & Targets; AI Sustainability Assistant |
+
 CarbonDesk is our Compact Programming capstone project at FH Dortmund. We are
 building a web platform for small and medium companies to track Scope 1, 2,
 and 3 carbon emissions, view their results, and get AI suggestions for reducing
