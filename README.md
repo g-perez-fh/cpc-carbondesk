@@ -338,49 +338,49 @@ classDiagram
         + factor_value : Decimal
         + kg_co2e : Decimal
         + id : int
-        + get_tco2e() : Decimal
+        + get_tco2e() Decimal
     }
     class ActivityEvent {
         + event_id : str
         + source : str
         + timestamp : datetime
         + metadata : dict
-        + get_tco2e() : Decimal
+        + get_tco2e() Decimal
     }
     class StreamProcessor {
         <<abstract>>
-        + process(events : Iterable) : Iterator
-        + #95;#95;iter#95;#95;() : Iterator
-        + #95;#95;or#95;#95;(other : StreamProcessor) : Pipeline
-        + #95;#95;ror#95;#95;(events : Iterable) : Pipeline
+        + process(events : Iterable) Iterator
+        + #95;#95;iter#95;#95;() Iterator
+        + #95;#95;or#95;#95;(other : StreamProcessor) Pipeline
+        + #95;#95;ror#95;#95;(events : Iterable) Pipeline
     }
     class Pipeline {
         + stages : List~StreamProcessor~
-        + process(events : Iterable) : Iterator
+        + process(events : Iterable) Iterator
     }
     class EventSource {
-        + #95;#95;iter#95;#95;() : EventSource
-        + #95;#95;next#95;#95;() : ActivityEvent
+        + #95;#95;iter#95;#95;() EventSource
+        + #95;#95;next#95;#95;() ActivityEvent
     }
     class ScopeFilter {
         + scopes : Set~int~
-        + process(events : Iterable) : Iterator
+        + process(events : Iterable) Iterator
     }
     class CO2eTransformer {
         + factors : Dict~str, Decimal~
-        + process(events : Iterable) : Iterator
+        + process(events : Iterable) Iterator
     }
     class ScopeTotalsAggregator {
         + totals : Dict~int, Decimal~
-        + process(events : Iterable) : Iterator
+        + process(events : Iterable) Iterator
     }
     class WindowedKpi {
         + window : int
-        + process(events : Iterable) : Iterator
+        + process(events : Iterable) Iterator
     }
     class PeakDetector {
         + threshold : Decimal
-        + process(events : Iterable) : Iterator
+        + process(events : Iterable) Iterator
     }
 
     ActivityRecord <|-- ActivityEvent
