@@ -2,8 +2,12 @@
 
 These classes mirror the Analytics UML diagram. They hold no Django imports and
 no database access, so they can be imported and exercised without a Django
-project configured. They operate on plain Python data (lists of dicts) that a
-caller - eventually the Django services in services.py - would supply.
+project configured. DashboardService and KpiCalculator operate on the shared
+shared.models.ActivityRecord - the same shape the Django model and
+stream_processing use - instead of ad-hoc dicts, so an activity record means
+the same thing everywhere in the project. ChartBuilder and ReportExporter format
+already-aggregated rows (chart points, report columns), which are a different
+thing from a raw activity record, so they keep taking plain dicts.
 """
 
 from datetime import datetime
@@ -66,9 +70,9 @@ class DashboardService:
     def _matches_filters(self, record):
         scope = self.filters.get("scope")
         site = self.filters.get("site")
-        if scope is not None and record.get("scope") != scope:
+        if scope is not None and record.scope != scope:
             return False
-        if site is not None and record.get("site") != site:
+        if site is not None and record.site != site:
             return False
         return True
 
@@ -82,20 +86,21 @@ class DashboardService:
             return self.cache[key]
         totals = {}
         for record in self._filtered():
-            scope = record.get("scope")
-            totals[scope] = totals.get(scope, Decimal("0")) + _as_decimal(record.get("kg_co2e", 0))
+            totals[record.scope] = totals.get(record.scope, Decimal("0")) + _as_decimal(
+                record.kg_co2e
+            )
         self.cache[key] = totals
         return totals
 
     def trend(self):
-        """Total kg CO2e per month, oldest first."""
+        """Total kg CO2e per month (derived from each record's date), oldest first."""
         key = ("trend", tuple(sorted(self.filters.items())))
         if key in self.cache:
             return self.cache[key]
         totals = {}
         for record in self._filtered():
-            month = record.get("month")
-            totals[month] = totals.get(month, Decimal("0")) + _as_decimal(record.get("kg_co2e", 0))
+            month = record.date.strftime("%Y-%m")
+            totals[month] = totals.get(month, Decimal("0")) + _as_decimal(record.kg_co2e)
         rows = [{"month": month, "kg_co2e": totals[month]} for month in sorted(totals)]
         self.cache[key] = rows
         return rows
@@ -147,7 +152,7 @@ class KpiCalculator:
         self._score = value
 
     def total_kg(self):
-        amounts = (_as_decimal(record.get("kg_co2e", 0)) for record in self._records)
+        amounts = (_as_decimal(record.kg_co2e) for record in self._records)
         return sum(amounts, Decimal("0"))
 
     def recompute_score(self):
@@ -167,9 +172,8 @@ class KpiCalculator:
         """The highest-emitting categories, largest first."""
         totals = {}
         for record in self._records:
-            category = record.get("category")
-            amount = _as_decimal(record.get("kg_co2e", 0))
-            totals[category] = totals.get(category, Decimal("0")) + amount
+            amount = _as_decimal(record.kg_co2e)
+            totals[record.category] = totals.get(record.category, Decimal("0")) + amount
         ranked = sorted(totals.items(), key=lambda item: item[1], reverse=True)
         return [{"category": category, "kg_co2e": total} for category, total in ranked[:limit]]
 

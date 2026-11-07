@@ -303,29 +303,42 @@ tested on its own. The Django-backed dashboard in `backend/analytics/services.py
 and `views.py` is unchanged; this module mirrors its design in framework-free
 classes for the UML assignment.
 
+`DashboardService` and `KpiCalculator` take the project's shared
+[`ActivityRecord`](#shared-data-model-team-proposal) (`shared/models.py`)
+instead of plain dicts, with the same field names as the Django model
+(`backend.emissions.models.ActivityRecord`) and `stream_processing`'s
+`ActivityEvent` use. `ChartBuilder` and `ReportExporter` still take plain dicts
+on purpose: they format already-aggregated chart points and report rows, which
+is a different thing from a raw activity record, not a second copy of the same
+format.
+
 ```mermaid
 classDiagram
     class DashboardService {
         -int org_id
         -dict filters
         -dict cache
-        +setup(records)
-        +summary() dict
-        +trend() list
+        +setup(records : List~ActivityRecord~) DashboardService
+        +get_org_id() int
+        +set_org_id(value : int) void
+        +summary() Dict~int, Decimal~
+        +trend() List~dict~
     }
     class KpiCalculator {
         -str period
         -Decimal baseline_kg
         -int score
-        +setup(records)
+        +setup(records : List~ActivityRecord~) KpiCalculator
+        +get_score() int
+        +set_score(value : int) void
         +recompute_score() int
-        +top_sources(limit) list
+        +top_sources(limit : int) List~dict~
     }
     class ChartBuilder {
-        -list palette
+        -List~str~ palette
         -str title
-        -list data
-        +setup(data)
+        -List~dict~ data
+        +setup(data : List~dict~) ChartBuilder
         +donut() dict
         +line() dict
     }
@@ -333,13 +346,115 @@ classDiagram
         -str format
         -datetime created_at
         -int user_id
-        +setup(rows, columns)
+        +setup(rows : List~dict~, columns : List~str~) ReportExporter
         +to_csv() str
         +to_pdf() bytes
     }
+    class ActivityRecord {
+        <<interface>>
+        +int organisation_id
+        +str site
+        +date date
+        +int scope
+        +Decimal kg_co2e
+        +get_tco2e() Decimal
+    }
+    class Organisation {
+        <<interface>>
+        +int id
+        +str name
+    }
+    class ReductionTarget {
+        <<interface>>
+        +str scope
+        +Decimal baseline_kg_co2e
+        +int target_year
+        +get_target_kg_co2e() Decimal
+    }
+
+    DashboardService "1" o-- "0..*" ActivityRecord : holds
+    KpiCalculator "1" o-- "0..*" ActivityRecord : holds
+    DashboardService ..> ChartBuilder : feeds rows to
+    DashboardService ..> ReportExporter : feeds rows to
+    DashboardService ..> Organisation : reads
+    KpiCalculator ..> ReductionTarget : scores against
+    note for ActivityRecord "Emissions subsystem, shared/models.py"
+    note for Organisation "Accounts subsystem"
+    note for ReductionTarget "Accounts subsystem"
 ```
 
-Each class validates its own state through `@property` setters (for example,
-`KpiCalculator.score` must stay between 0 and 100, `ChartBuilder.palette` must
-be non-empty hex colors). Tests live in `backend/analytics/tests/test_domain.py`
-and run without a database: `python -m pytest backend/analytics/tests/test_domain.py`.
+Every attribute marked `-` is private, validated through an `@property`
+getter/setter pair (shown above as `get_x()`/`set_x()`), not accessed directly
+(for example, `KpiCalculator.score` must stay between 0 and 100,
+`ChartBuilder.palette` must be non-empty hex colors, and `ActivityRecord.tco2e` /
+`ReductionTarget.target_kg_co2e` are read-only computed properties). `+`
+attributes and operations are the public surface. `ActivityRecord`,
+`Organisation`, and `ReductionTarget` are external interfaces this subsystem
+depends on but doesn't own - see the note on each. Tests live in
+`backend/analytics/tests/test_domain.py` and run without a database:
+`python -m pytest backend/analytics/tests/test_domain.py`.
+
+## Shared data model (team proposal)
+
+Our professor's feedback was that the project has too many different data
+formats for the same thing, and no connected concept of the system across
+subsystems. For Analytics, one activity record existed in three shapes: the
+Django model `backend.emissions.models.ActivityRecord` (`kg_co2e`), plain dicts
+here in `backend/analytics/domain.py`, and the `ActivityEvent` dataclass in
+`stream_processing/base.py` (Hometask 2, separate branch).
+
+`shared/models.py` is a proposal to fix that: one plain-Python `ActivityRecord`
+dataclass with field names that match the Django model exactly
+(`organisation_id`, `site`, `date`, `scope`, `category`, `quantity`, `unit`,
+`factor_value`, `kg_co2e`), storing emissions in kg CO2e everywhere with a
+read-only `tco2e` property for metric tons. It has no Django dependency, so any
+subsystem can import it (`pythonpath = ["backend", "."]` already makes
+`shared.models` importable from both `backend/` and other top-level packages).
+
+`DashboardService` and `KpiCalculator` above now use these exact field names, so
+an activity record means the same thing wherever it shows up in Analytics code.
+**Proposal for the team:** Emissions and Accounts/AI Assistant code should read
+and write the same shape instead of their own dicts/tuples, so the whole
+project - not just Analytics - agrees on one format for an activity record.
+
+## System architecture (team proposal)
+
+**This section is a proposal for the whole team, not yet implemented outside
+Analytics.** It responds to the feedback that the subsystems' interfaces aren't
+connected into one system concept.
+
+```mermaid
+flowchart LR
+    subgraph EM["Emissions (Guillermo)"]
+        EF[EmissionFactor]
+    end
+    subgraph AC["Accounts / Organisation / Targets (Omotunde)"]
+        ORG[Organisation, Site]
+        RT[ReductionTarget]
+    end
+    subgraph AN["Analytics (Harib)"]
+        DS[DashboardService, KpiCalculator]
+        CB[ChartBuilder, ReportExporter]
+    end
+    subgraph AI["AI Assistant (Omotunde)"]
+        ASSIST[Assistant]
+    end
+
+    SHARED(("ActivityRecord<br/>shared/models.py"))
+
+    EM -- "calculates & provides" --> SHARED
+    SHARED -- "consumed by" --> AN
+    SHARED -- "consumed by" --> AI
+    AC -- "org scope, targets" --> AN
+    AC -- "org scope, targets" --> AI
+    AN -- "dashboard summaries, KPI scores" --> AI
+```
+
+Emissions calculates and owns `ActivityRecord` (quantity, factor, `kg_co2e`);
+Analytics and the AI Assistant only ever consume it, through the shared shape
+above, instead of each inventing their own copy. Accounts/Targets provides the
+organisation scope and reduction targets that Analytics and the AI Assistant
+read but don't own. This diagram is deliberately at the subsystem level, not
+the class level - see the class diagram above for the class-level UML within
+Analytics, including the `<<interface>>` boxes for `ActivityRecord`,
+`Organisation`, and `ReductionTarget`.

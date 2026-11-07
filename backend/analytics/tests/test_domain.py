@@ -1,16 +1,32 @@
 """Plain-Python tests for the Homework 1 OOP classes. No Django, no database."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
 
 from analytics.domain import ChartBuilder, DashboardService, KpiCalculator, ReportExporter
+from shared.models import ActivityRecord
+
+
+def make_record(scope, site, record_date, category, kg_co2e):
+    return ActivityRecord(
+        organisation_id=1,
+        site=site,
+        date=record_date,
+        scope=scope,
+        category=category,
+        quantity=Decimal("1"),
+        unit="unit",
+        factor_value=Decimal("1"),
+        kg_co2e=Decimal(str(kg_co2e)),
+    )
+
 
 RECORDS = [
-    {"scope": 1, "site": "Plant", "month": "2026-01", "category": "Diesel", "kg_co2e": 100},
-    {"scope": 2, "site": "Office", "month": "2026-01", "category": "Electricity", "kg_co2e": 50},
-    {"scope": 2, "site": "Office", "month": "2026-02", "category": "Electricity", "kg_co2e": 75},
+    make_record(1, "Plant", date(2026, 1, 10), "Diesel", 100),
+    make_record(2, "Office", date(2026, 1, 20), "Electricity", 50),
+    make_record(2, "Office", date(2026, 2, 5), "Electricity", 75),
 ]
 
 
@@ -40,7 +56,7 @@ def test_dashboard_service_trend_is_sorted_by_month():
 def test_dashboard_service_caches_summary():
     service = DashboardService(org_id=1).setup(RECORDS)
     first = service.summary()
-    service._records.append({"scope": 1, "kg_co2e": 999})
+    service._records.append(make_record(1, "Plant", date(2026, 3, 1), "Diesel", 999))
     assert service.summary() is first
 
 
