@@ -30,10 +30,11 @@ async def backend_is_ready():
         return False
 
 
-async def request(method, path, *, json=None, params=None, auth=True):
+async def request(method, path, *, json=None, params=None, auth=True, files=None, data=None):
     """Call ``/api/<path>`` and return the decoded JSON body (None when empty).
 
     Raises ``ApiError`` with a readable message for connection and HTTP errors.
+    Use ``files`` for multipart uploads such as CSV imports.
     """
     headers = {}
     token = session.token() if auth else None
@@ -47,6 +48,8 @@ async def request(method, path, *, json=None, params=None, auth=True):
                 json=json,
                 params=params,
                 headers=headers,
+                files=files,
+                data=data,
             )
     except httpx.HTTPError as exc:
         raise ApiError("The backend is not reachable. Please try again later.") from exc

@@ -1,4 +1,6 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from django.db.models.deletion import ProtectedError
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -103,6 +105,16 @@ class SiteViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
     queryset = Site.objects.all()
     serializer_class = SiteSerializer
     permission_classes = [IsOrganisationAdminOrReadOnly]
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        try:
+            super().perform_destroy(instance)
+        except ProtectedError as exc:
+            # Roll back the audit entry as well: no site was actually deleted.
+            raise as_drf_error(
+                DjangoValidationError("This site has activity records and cannot be deleted.")
+            ) from exc
 
 
 class MemberViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):

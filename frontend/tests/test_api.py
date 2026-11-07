@@ -60,6 +60,19 @@ def test_request_sends_token_and_decodes_json():
     assert send.call_args.args[1].endswith("/api/accounts/sites/")
 
 
+def test_request_forwards_multipart_files():
+    with (
+        patch("frontend.api.session") as session,
+        patch("frontend.api.httpx.AsyncClient.request", new_callable=AsyncMock) as send,
+    ):
+        session.token.return_value = "abc"
+        send.return_value = _response(201, {"created": 2})
+        files = {"file": ("activities.csv", b"date\n", "text/csv")}
+        result = asyncio.run(api.post("emissions/activities/import/", files=files))
+    assert result == {"created": 2}
+    assert send.call_args.kwargs["files"] == files
+
+
 def test_expired_session_signs_out():
     with (
         patch("frontend.api.session") as session,

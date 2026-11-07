@@ -1,3 +1,8 @@
-"""Add this subsystem's backend routes here."""
+from django.urls import path
 
-urlpatterns = []
+from .views import DashboardView, ExportCsvView
+
+urlpatterns = [
+    path("dashboard/", DashboardView.as_view(), name="analytics-dashboard"),
+    path("export/csv/", ExportCsvView.as_view(), name="analytics-export-csv"),
+]
