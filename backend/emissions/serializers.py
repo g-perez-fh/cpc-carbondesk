@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from accounts.models import Site
+from accounts.models import Department, Site
 
 from .calculations import CO2eCalculator, EmissionsError
 from .models import ActivityRecord, EmissionFactor
@@ -33,6 +33,10 @@ class CompanyRelationsMixin:
         request = self.context.get("request")
         organisation = request.user.organisation if request else None
         self.fields["factor"].queryset = EmissionFactor.objects.filter(organisation=organisation)
+        if "department" in self.fields:
+            self.fields["department"].queryset = Department.objects.filter(
+                organisation=organisation
+            )
         if "site" in self.fields:
             self.fields["site"].queryset = Site.objects.filter(organisation=organisation)
 
@@ -92,6 +96,7 @@ class ActivityRecordSerializer(CompanyRelationsMixin, serializers.ModelSerialize
             "factor",
             "site",
             "site_name",
+            "department",
             "category",
             "scope",
             "factor_value",

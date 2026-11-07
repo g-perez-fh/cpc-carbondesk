@@ -5,7 +5,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
 
-from accounts.models import AuditLog, Site
+from accounts.models import AuditLog, Department, Site
 from accounts.services import record_audit
 
 from .calculations import CO2eCalculator, EmissionsError
@@ -75,7 +75,12 @@ def import_activities(*, organisation, created_by, text):
         factors_by_name.setdefault(factor.name.strip(), []).append(factor)
 
     activities, errors = CsvImporter(
-        text, sites_by_name=sites_by_name, factors_by_name=factors_by_name
+        text,
+        sites_by_name=sites_by_name,
+        factors_by_name=factors_by_name,
+        departments_by_name={
+            d.name: d for d in Department.objects.filter(organisation=organisation)
+        },
     ).parse()
     if errors:
         return 0, errors
@@ -89,6 +94,7 @@ def import_activities(*, organisation, created_by, text):
             quantity=activity.quantity,
             unit=activity.unit,
             description=activity.description,
+            department=activity.department,
             date=activity.date,
         )
         record_audit(actor=created_by, action=AuditLog.Action.CREATE, instance=record)

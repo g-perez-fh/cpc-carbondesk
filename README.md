@@ -283,9 +283,8 @@ rules as manual entry and receives its own audit-log entry. The import does not
 check for duplicate activities, so re-uploading a file creates the rows again.
 A template is available from the import dialog.
 
-Streaming and department
-links are follow-up work. This slice uses the existing PostgreSQL/SQLite setup;
-MySQL support for Hometask 3 is still pending.
+Department links and the local streaming pipeline are available below.
+PostgreSQL/SQLite remain the default setup; Hometask 3 has a separate MySQL stack.
 
 ### Correcting a factor
 
@@ -295,3 +294,79 @@ Choose **Recalculate activities** and confirm to update all linked records and t
 Use a new factor for a different unit, scope, or a separate publication/version.
 Editing an existing activity with its original factor continues to use its saved
 calculation inputs until explicit recalculation. Its preview follows the same rule.
+
+### Departments
+
+Administrators can manage departments on the Organisation page. Activities have
+an optional company department. CSV files accept an optional `department` column
+matching the department name exactly. Existing activities remain unassigned.
+Referenced departments cannot be deleted; viewers and editors cannot manage them.
+
+### Local telemetry pipeline
+
+`backend/emissions/streaming.py` provides `ActivityStream`, `ScopeFilter`,
+`EmissionTransformer`, and composable `Pipeline` classes for Homework 2.
+Compose `ScopeFilter([2]) + EmissionTransformer(factors)` and iterate over
+`pipeline.run(ActivityStream(events))`. Events contain `scope`, `factor`,
+`quantity`, and `unit`. The factor mapping contains `scope`, `kg_per_unit`, and
+`unit` for each factor name. Results add `tonnes_co2e` as a Decimal. Invalid events
+raise `EmissionsError`. This is a local pipeline, with no broker or persistence.
+
+### Optional database backups
+
+`docker compose -f compose.yaml -f compose.backup.yaml up -d --build` enables
+PostgreSQL backups at startup and every 24 hours while the backup container runs.
+Dumps go into the `backups` named volume. Check container logs for errors.
+Backups cover the database, not uploads. There is no retention policy or off-site
+copy. Restore a dump with `pg_restore` into a separate empty database to validate
+recovery before relying on this workflow.
+
+## Homework recording setup
+
+Guillermo's three explicit OOP classes are `CO2eCalculator`, `CsvImporter`, and
+`ScopeFilter`. Each initializes its state in a constructor and provides validating
+setters and getters. The scope filter is also reused in the streaming assignment.
+Run the synthetic OOP and streaming demonstration from the repository root:
+
+```bash
+PYTHONPATH=backend python examples/homework_demo.py
+```
+
+### MySQL for Hometask 3
+
+The separate homework stack leaves the default PostgreSQL setup unchanged:
+
+```bash
+docker compose -f compose.mysql.yaml up -d --build
+docker compose -f compose.mysql.yaml logs backend
+```
+
+Stop other servers on ports 8000 and 8080 first. Open http://localhost:8080,
+register a demo company, add a site and synthetic factor, and save an activity.
+Inspect persistence using the database client (enter the local homework password
+from `compose.mysql.yaml` at the prompt):
+
+```bash
+docker compose -f compose.mysql.yaml exec db mysql -u carbondesk -p carbondesk
+```
+
+```sql
+SELECT id, description, quantity, kg_co2e FROM emissions_activityrecord;
+```
+
+This uses MySQL 8.4 and Django's MySQL backend with mysqlclient. The driver is an
+optional dependency in `requirements/mysql.txt`; the homework Dockerfile installs
+its native build prerequisites. Local credentials are for this isolated demo only.
+`docker compose -f compose.mysql.yaml down` preserves the MySQL data volume.
+
+### Submission checklist
+
+Team names and subsystem ownership are listed under **Who does what** above.
+For each assignment branch, add the rendered LaTeX class diagrams and the direct
+unified team-video link. Those artifacts are intentionally excluded from the
+current implementation commits. The video link is pending recording/upload;
+no placeholder URL represents a completed submission. Each teammate must supply
+their own implemented class explanation and subsystem error-handling evidence.
+Hometasks 1 and 2 use the user-specified branches `Homeassignment1` and
+`HomeworkAssignment2`. Confirm naming for 3 and 4 against the course submission
+instructions before pushing. No submission branches or videos are published here.

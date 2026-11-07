@@ -45,6 +45,7 @@ class EmissionsPage:
     def __init__(self):
         self.factors = []
         self.sites = []
+        self.departments = []
         self.filters = {}
         self.page_number = 1
         self.can_edit = session.can_edit()
@@ -113,6 +114,8 @@ class EmissionsPage:
         if not (ok_factors and ok_sites):
             self.loading.set_text("Could not load the workspace. Refresh the page to try again.")
             return
+        ok_departments, departments = await call_api(api.get("accounts/departments/"))
+        self.departments = departments if ok_departments else []
         self.factors, self.sites = factors, sites
         self.site.set_options({0: "All sites", **{s["id"]: s["name"] for s in sites}})
         if self.can_edit:
@@ -435,7 +438,7 @@ class EmissionsPage:
             ui.label("Import activities from CSV").classes("text-xl font-semibold")
             ui.label(
                 "Required columns: date, description, site, factor, quantity, unit. "
-                "Add factor_year when several factors share a name."
+                "Add factor_year when several factors share a name; department is optional."
             ).classes("text-sm text-gray-600")
             ui.label(
                 "Dates use YYYY-MM-DD. Site and factor names must match this company exactly. "
@@ -451,7 +454,7 @@ class EmissionsPage:
                 try:
                     result = await api.post(
                         "emissions/activities/import/",
-                        files={"file": (event.name, event.content.read(), "text/csv")},
+                        files={"file": (event.file.name, await event.file.read(), "text/csv")},
                     )
                 except api.ApiError as exc:
                     ui.notify(str(exc), type="negative", multi_line=True)
@@ -524,6 +527,15 @@ class EmissionsPage:
                 .props("outlined dense")
                 .classes("w-full")
             )
+            department = (
+                ui.select(
+                    {0: "No department", **{d["id"]: d["name"] for d in self.departments}},
+                    value=(record.get("department") or 0) if record else 0,
+                    label="Department",
+                )
+                .classes("w-full")
+                .props("outlined dense")
+            )
             details = ui.label().classes("text-sm text-gray-600 break-all")
             quantity = (
                 ui.input(
@@ -570,6 +582,7 @@ class EmissionsPage:
                         "description": description.value,
                         "date": day.value,
                         "site": site.value,
+                        "department": department.value or None,
                     }
                     operation = (
                         api.patch(f"emissions/activities/{record['id']}/", json=data)

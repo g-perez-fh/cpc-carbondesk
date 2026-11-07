@@ -1,0 +1,2 @@
+-r backend.txt
+mysqlclient==2.2.7

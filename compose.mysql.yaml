@@ -1,0 +1,41 @@
+name: carbondesk-homework-mysql
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: carbondesk
+      MYSQL_USER: carbondesk
+      MYSQL_PASSWORD: local-homework-only
+      MYSQL_ROOT_PASSWORD: local-root-only
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u $$MYSQL_USER -D $$MYSQL_DATABASE -e 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.mysql
+    environment:
+      DB_ENGINE: mysql
+      MYSQL_HOST: db
+      MYSQL_DATABASE: carbondesk
+      MYSQL_USER: carbondesk
+      MYSQL_PASSWORD: local-homework-only
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8000
+      FRONTEND_HOST: 0.0.0.0
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [backend]
+volumes:
+  mysql_data:

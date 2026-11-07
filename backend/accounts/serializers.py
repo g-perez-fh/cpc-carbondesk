@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from . import services
-from .models import Alert, AuditLog, Organisation, ReductionTarget, Site, User
+from .models import Alert, AuditLog, Department, Organisation, ReductionTarget, Site, User
 
 
 def as_drf_error(exc: DjangoValidationError, field=None):
@@ -39,6 +39,18 @@ class SiteSerializer(OrganisationScopedSerializer):
     def validate_name(self, value):
         if self.scoped(Site.objects).filter(name__iexact=value).exists():
             raise serializers.ValidationError("A site with this name already exists.")
+        return value
+
+
+class DepartmentSerializer(OrganisationScopedSerializer):
+    class Meta:
+        model = Department
+        fields = ["id", "name", "location", "created_at"]
+        read_only_fields = ["created_at"]
+
+    def validate_name(self, value):
+        if self.scoped(Department.objects).filter(name__iexact=value).exists():
+            raise serializers.ValidationError("A department with this name already exists.")
         return value
 
 

@@ -46,6 +46,9 @@ class ActivityRecord(models.Model):
     organisation = models.ForeignKey("accounts.Organisation", on_delete=models.CASCADE)
     site = models.ForeignKey("accounts.Site", on_delete=models.PROTECT)
     factor = models.ForeignKey(EmissionFactor, on_delete=models.PROTECT)
+    department = models.ForeignKey(
+        "accounts.Department", on_delete=models.PROTECT, null=True, blank=True
+    )
     description = models.CharField(max_length=160)
     date = models.DateField()
     quantity = models.DecimalField(
