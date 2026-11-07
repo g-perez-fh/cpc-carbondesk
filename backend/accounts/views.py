@@ -12,11 +12,12 @@ from rest_framework.views import APIView
 
 from . import services
 from .mixins import OrganisationScopedMixin
-from .models import Alert, AuditLog, ReductionTarget, Site, User
+from .models import Alert, AuditLog, Department, ReductionTarget, Site, User
 from .permissions import IsOrganisationAdmin, IsOrganisationAdminOrReadOnly, IsOrganisationMember
 from .serializers import (
     AlertSerializer,
     AuditLogSerializer,
+    DepartmentSerializer,
     LoginSerializer,
     MemberSerializer,
     OrganisationSerializer,
@@ -114,6 +115,22 @@ class SiteViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
             # Roll back the audit entry as well: no site was actually deleted.
             raise as_drf_error(
                 DjangoValidationError("This site has activity records and cannot be deleted.")
+            ) from exc
+
+
+class DepartmentViewSet(OrganisationScopedMixin, viewsets.ModelViewSet):
+    queryset = Department.objects.all()
+    serializer_class = DepartmentSerializer
+    permission_classes = [IsOrganisationAdminOrReadOnly]
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        try:
+            super().perform_destroy(instance)
+        except ProtectedError as exc:
+            # Roll back the audit entry as well: no department was actually deleted.
+            raise as_drf_error(
+                DjangoValidationError("This department has activity records and cannot be deleted.")
             ) from exc
 
 

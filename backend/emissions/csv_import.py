@@ -28,6 +28,7 @@ class ImportedActivity:
     factor: object
     quantity: Decimal
     unit: str
+    department: object = None
 
 
 class CsvImporter:
@@ -38,11 +39,22 @@ class CsvImporter:
     silently choosing one record.
     """
 
-    def __init__(self, text, *, sites_by_name, factors_by_name, today=None):
-        self._text = text
+    def __init__(
+        self, text, *, sites_by_name, factors_by_name, departments_by_name=None, today=None
+    ):
+        self._departments_by_name = departments_by_name or {}
+        self.set_text(text)
         self._sites_by_name = sites_by_name
         self._factors_by_name = factors_by_name
         self._today = today or date.today()
+
+    def get_text(self):
+        return self._text
+
+    def set_text(self, text):
+        if not isinstance(text, str):
+            raise EmissionsError("CSV input must be text.")
+        self._text = text
 
     def parse(self):
         """Return ``(activities, errors)``; saving is the caller's responsibility."""
@@ -104,6 +116,12 @@ class CsvImporter:
 
     def _parse_row(self, row_number, values):
         errors = []
+        department = None
+        department_name = values.get("department", "")
+        if department_name:
+            department = self._departments_by_name.get(department_name)
+            if department is None:
+                errors.append("Department was not found in this company.")
 
         description = values.get("description", "")
         if not description:
@@ -156,6 +174,7 @@ class CsvImporter:
         return (
             ImportedActivity(
                 row_number=row_number,
+                department=department,
                 date=activity_date,
                 description=description,
                 site=site,
