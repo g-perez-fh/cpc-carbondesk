@@ -37,6 +37,34 @@ def create_activity(*, organisation, created_by, factor, site, quantity, unit, *
 
 
 @transaction.atomic
+def update_activity(record, *, refresh_factor=False, **fields):
+    """Keep saved inputs unless another factor or explicit recalculation is requested."""
+    factor = fields.get("factor", record.factor)
+    site = fields.get("site", record.site)
+    if (
+        factor.organisation_id != record.organisation_id
+        or site.organisation_id != record.organisation_id
+    ):
+        raise EmissionsError("The factor and site must belong to the activity's organisation.")
+    if refresh_factor or factor.pk != record.factor_id:
+        record.category = factor.name
+        record.scope = factor.scope
+        record.factor_value = factor.kg_per_unit
+        record.factor_source = factor.source
+        record.factor_year = factor.year
+        record.is_demo = factor.is_demo
+        record.unit = factor.unit
+    result = CO2eCalculator(record.factor_value, record.unit).calculate(
+        fields.get("quantity", record.quantity), fields.get("unit", record.unit)
+    )
+    for name, value in fields.items():
+        setattr(record, name, value)
+    record.kg_co2e = result
+    record.save()
+    return record
+
+
+@transaction.atomic
 def import_activities(*, organisation, created_by, text):
     """Validate the whole file, then save every row or none of them."""
     sites_by_name = {}
