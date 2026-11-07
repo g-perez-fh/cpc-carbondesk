@@ -438,7 +438,7 @@ class EmissionsPage:
             ui.label("Import activities from CSV").classes("text-xl font-semibold")
             ui.label(
                 "Required columns: date, description, site, factor, quantity, unit. "
-                "Add factor_year when several factors share a name."
+                "Add factor_year when several factors share a name; department is optional."
             ).classes("text-sm text-gray-600")
             ui.label(
                 "Dates use YYYY-MM-DD. Site and factor names must match this company exactly. "
@@ -454,7 +454,7 @@ class EmissionsPage:
                 try:
                     result = await api.post(
                         "emissions/activities/import/",
-                        files={"file": (event.name, event.content.read(), "text/csv")},
+                        files={"file": (event.file.name, await event.file.read(), "text/csv")},
                     )
                 except api.ApiError as exc:
                     ui.notify(str(exc), type="negative", multi_line=True)
