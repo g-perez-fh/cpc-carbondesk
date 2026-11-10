@@ -189,9 +189,10 @@ python -m ruff format --check .
 Implemented: **Users, Organisation & Targets** and the **AI Sustainability
 Assistant**. The emissions page now supports factor creation, activity entry,
 CSV import, calculation previews, filtered records, and totals. The dashboard at
-http://localhost:8080/dashboard shows KPIs, emissions by scope, a monthly trend,
-emissions by site, the top sources and target progress, with filters and a CSV
-export. PDF reports are still to come.
+http://localhost:8080/dashboard shows KPIs (including a 0-100 sustainability
+score), emissions by scope, a monthly trend, emissions by site and by
+department, the top sources and target progress, with filters (including a
+department filter) and CSV/PDF export.
 
 - Register a company at http://localhost:8080/register; you become its administrator.
 - Roles: `admin` manages the organisation, members and targets; `editor` enters
@@ -222,7 +223,7 @@ export. PDF reports are still to come.
 | Organisation | `accounts/organisation/`, `accounts/sites/`, `accounts/members/` |
 | Targets & alerts | `accounts/targets/`, `accounts/targets/evaluate/`, `accounts/alerts/`, `accounts/audit-log/` |
 | Emissions | `emissions/factors/`, `emissions/activities/`, `emissions/activities/import/`, `emissions/preview/`, `emissions/summary/` |
-| Analytics | `analytics/dashboard/`, `analytics/export/csv/` (both accept `start`, `end`, `scope`, `site`) |
+| Analytics | `analytics/dashboard/`, `analytics/export/csv/`, `analytics/export/pdf/` (all accept `start`, `end`, `scope`, `site`, `department`) |
 | Assistant | `assistant/conversations/`, `assistant/conversations/<id>/messages/`, `assistant/recommendations/`, `assistant/summaries/` |
 
 Implemented UML diagrams and the team presentation video link will be added as
@@ -484,6 +485,60 @@ python -m pytest stream_processing
 ```
 
 Video: [link to be added]
+
+## Analytics: reporting, scoring and error handling
+
+PDF export, the sustainability score, the department breakdown/filter and clean
+JSON error handling (`backend/analytics/exceptions.py`) for the dashboard and
+export endpoints.
+
+```mermaid
+classDiagram
+    class AnalyticsAPIView {
+        <<abstract>>
+        + handle_exception(exc : Exception) Response
+    }
+    class DashboardView {
+        + get(request : Request) Response
+    }
+    class ExportCsvView {
+        + get(request : Request) Response
+    }
+    class ExportPdfView {
+        + get(request : Request) Response
+    }
+    class AnalyticsError {
+        + error_code : str
+        + status_code : int
+        + default_message : str
+        + message : str
+        + as_response_data() dict
+    }
+    class InvalidFilterError
+    class NoDataError
+    class ExportError
+
+    AnalyticsAPIView <|-- DashboardView
+    AnalyticsAPIView <|-- ExportCsvView
+    AnalyticsAPIView <|-- ExportPdfView
+    AnalyticsError <|-- InvalidFilterError
+    AnalyticsError <|-- NoDataError
+    AnalyticsError <|-- ExportError
+    AnalyticsAPIView ..> AnalyticsError : handle_exception() catches
+    note for AnalyticsAPIView "handle_exception() turns any AnalyticsError into {error, detail} JSON with the exception's status_code; everything else falls back to DRF's default handling."
+    note for InvalidFilterError "Raised for a bad scope/date range, or a department that does not belong to the caller's organisation (status 400)."
+    note for NoDataError "Raised by export_csv()/export_pdf() when the filtered queryset is empty (status 404)."
+    note for ExportError "Raised when PDF generation itself fails, e.g. a reportlab error (status 400)."
+```
+
+`ExportPdfView` builds on `services.export_pdf()`, which reuses the same
+aggregations as the dashboard (`scope_totals`, `totals_by_site`,
+`totals_by_department`, `top_sources`, `targets_overview`) to render a PDF with
+`reportlab` instead of returning JSON, then base64-encodes it inside the JSON
+envelope the same way `export_csv()` already does. `services.sustainability_score()`
+scores progress toward the organisation's "all scopes" target the same way the
+Hometask 1 UML's `KpiCalculator.score` idea did: a single 0-100 number, clamped
+to that range, `None` when there is no target to score against.
 
 ## Shared data model (team proposal)
 
