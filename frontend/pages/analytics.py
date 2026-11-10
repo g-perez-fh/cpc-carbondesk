@@ -1,7 +1,9 @@
-"""Analytics dashboard: KPIs, charts, target progress and CSV export.
+"""Analytics dashboard: KPIs, charts, target progress and CSV/PDF export.
 
 All numbers come from the backend (``/api/analytics/...``). This page only draws them.
 """
+
+import base64
 
 import plotly.graph_objects as go
 from fastapi.responses import RedirectResponse
@@ -74,6 +76,20 @@ def site_figure(by_site):
     )
 
 
+def department_figure(by_department):
+    rows = list(reversed(by_department))  # largest bar on top
+    return go.Figure(
+        go.Bar(
+            x=[float(row["kg_co2e"]) for row in rows],
+            y=[row["department"] for row in rows],
+            orientation="h",
+            marker={"color": "#1f5f8b"},
+            hovertemplate="%{y}<br>%{x:,.2f} kg CO2e<extra></extra>",
+        ),
+        layout=CHART_LAYOUT | {"xaxis": {"title": "kg CO2e"}},
+    )
+
+
 @ui.page("/dashboard")
 async def page():
     if not session.token():
@@ -103,10 +119,20 @@ class DashboardPage:
                 .props("outlined dense")
                 .classes("w-44")
             )
+            self.department = (
+                ui.select(
+                    {0: "All departments", "unassigned": "Unassigned"}, value=0, label="Department"
+                )
+                .props("outlined dense")
+                .classes("w-44")
+            )
             ui.button("Apply", on_click=self.apply_filters).props("unelevated color=teal-9 no-caps")
             ui.button("Reset", on_click=self.reset_filters).props("flat color=grey-8 no-caps")
             ui.space()
             ui.button("Export CSV", icon="download", on_click=self.export_csv).props(
+                "outline color=teal-9 no-caps"
+            )
+            ui.button("Export PDF", icon="picture_as_pdf", on_click=self.export_pdf).props(
                 "outline color=teal-9 no-caps"
             )
         self.content = ui.column().classes("w-full gap-4")
@@ -117,6 +143,12 @@ class DashboardPage:
         ok, sites = await call_api(api.get("accounts/sites/"))
         if ok:
             self.site.set_options({0: "All sites", **{s["id"]: s["name"] for s in sites}})
+        ok, departments = await call_api(api.get("accounts/departments/"))
+        if ok:
+            self.department.set_options(
+                {0: "All departments", "unassigned": "Unassigned"}
+                | {d["id"]: d["name"] for d in departments}
+            )
         await self.refresh()
 
     async def apply_filters(self):
@@ -127,6 +159,7 @@ class DashboardPage:
                 "end": self.end.value,
                 "scope": self.scope.value,
                 "site": self.site.value,
+                "department": self.department.value,
             }.items()
             if value
         }
@@ -134,7 +167,7 @@ class DashboardPage:
 
     async def reset_filters(self):
         self.start.value = self.end.value = ""
-        self.scope.value = self.site.value = 0
+        self.scope.value = self.site.value = self.department.value = 0
         await self.apply_filters()
 
     async def refresh(self):
@@ -169,16 +202,25 @@ class DashboardPage:
                 section_title("Emissions by site")
                 ui.plotly(site_figure(data["by_site"])).classes("w-full")
             with ui.card().classes("flex-1 min-w-72"):
+                section_title("Emissions by department")
+                ui.plotly(department_figure(data["by_department"])).classes("w-full")
+        with ui.row().classes("w-full gap-4 no-wrap max-md:flex-wrap"):
+            with ui.card().classes("w-full"):
                 self.top_sources_table(data["top_sources"])
         self.targets_card(data["targets"])
 
     def kpi_row(self, data):
         largest = data["largest_scope"]
+        score = data["sustainability_score"]
+        score_value = (
+            f"{float(score):.0f} / 100" if score is not None else "Set a target to get a score"
+        )
         tiles = [
             ("Total emissions", kg(data["total_kg_co2e"]), "co2"),
             ("Activity records", str(data["record_count"]), "receipt_long"),
             ("Sites reporting", str(data["site_count"]), "apartment"),
             ("Largest scope", SCOPES[largest] if largest else "None yet", "donut_large"),
+            ("Sustainability score", score_value, "eco"),
         ]
         with ui.row().classes("w-full gap-4 no-wrap max-md:flex-wrap"):
             for label, value, icon in tiles:
@@ -234,3 +276,11 @@ class DashboardPage:
         if ok:
             ui.download(data["content"].encode("utf-8"), data["filename"], "text/csv")
             ui.notify(f"Exported {data['rows']} records.", type="positive")
+
+    async def export_pdf(self):
+        ok, data = await call_api(api.get("analytics/export/pdf/", params=self.filters))
+        if ok:
+            ui.download(
+                base64.b64decode(data["content_base64"]), data["filename"], "application/pdf"
+            )
+            ui.notify("PDF report exported.", type="positive")
