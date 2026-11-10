@@ -3,3 +3,4 @@ djangorestframework==3.18.3
 openai==3.46.0
 psycopg[binary]==3.3.8
 python-dotenv==1.2.4
+reportlab==4.4.4

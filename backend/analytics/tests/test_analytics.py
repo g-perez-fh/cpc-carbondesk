@@ -1,3 +1,4 @@
+import base64
 import csv
 import io
 from datetime import date
@@ -5,8 +6,9 @@ from decimal import Decimal
 
 import pytest
 
-from accounts.models import Organisation, ReductionTarget, Site
+from accounts.models import Department, Organisation, ReductionTarget, Site
 from analytics import services
+from analytics.exceptions import AnalyticsError, ExportError, InvalidFilterError, NoDataError
 from emissions.models import ActivityRecord, EmissionFactor
 
 pytestmark = pytest.mark.django_db
@@ -17,6 +19,14 @@ def sites(organisation):
     return {
         "office": Site.objects.create(organisation=organisation, name="Main office"),
         "plant": Site.objects.create(organisation=organisation, name="Plant"),
+    }
+
+
+@pytest.fixture
+def departments(organisation):
+    return {
+        "ops": Department.objects.create(organisation=organisation, name="Operations"),
+        "sales": Department.objects.create(organisation=organisation, name="Sales"),
     }
 
 
@@ -40,11 +50,12 @@ def factors(organisation):
     }
 
 
-def add(organisation, site, factor, day, kg):
+def add(organisation, site, factor, day, kg, department=None):
     return ActivityRecord.objects.create(
         organisation=organisation,
         site=site,
         factor=factor,
+        department=department,
         description=f"{factor.name} {day}",
         date=day,
         quantity=Decimal(kg),
@@ -170,3 +181,270 @@ def test_csv_export(api_for, viewer_user, records):
     assert [row["kg_co2e"] for row in rows] == ["100.00", "150.00"]
     assert rows[0]["site"] == "Main office"
     assert response.data["filename"].endswith(".csv")
+
+
+# Department breakdown and filter ---------------------------------------------
+
+
+def test_totals_by_department_groups_with_unassigned_fallback(
+    organisation, sites, factors, departments
+):
+    add(
+        organisation,
+        sites["office"],
+        factors["power"],
+        date(2026, 1, 10),
+        "100",
+        departments["ops"],
+    )
+    add(
+        organisation,
+        sites["office"],
+        factors["power"],
+        date(2026, 2, 10),
+        "150",
+        departments["sales"],
+    )
+    add(organisation, sites["plant"], factors["diesel"], date(2026, 2, 20), "400")
+    records = ActivityRecord.objects.filter(organisation=organisation)
+    assert services.totals_by_department(records) == [
+        {"department": "Unassigned", "kg_co2e": Decimal("400.00")},
+        {"department": "Sales", "kg_co2e": Decimal("150.00")},
+        {"department": "Operations", "kg_co2e": Decimal("100.00")},
+    ]
+
+
+def test_department_filter_narrows_records(organisation, sites, factors, departments):
+    add(
+        organisation,
+        sites["office"],
+        factors["power"],
+        date(2026, 1, 10),
+        "100",
+        departments["ops"],
+    )
+    add(
+        organisation,
+        sites["office"],
+        factors["power"],
+        date(2026, 2, 10),
+        "150",
+        departments["sales"],
+    )
+    add(organisation, sites["plant"], factors["diesel"], date(2026, 2, 20), "400")
+    assert services.filter_records(organisation, department=departments["ops"]).count() == 1
+    assert services.filter_records(organisation, department="unassigned").count() == 1
+    assert services.filter_records(organisation).count() == 3
+
+
+def test_dashboard_api_department_filter(
+    api_for, viewer_user, organisation, sites, factors, departments
+):
+    add(
+        organisation,
+        sites["office"],
+        factors["power"],
+        date(2026, 1, 10),
+        "100",
+        departments["ops"],
+    )
+    add(organisation, sites["plant"], factors["diesel"], date(2026, 2, 20), "400")
+    response = api_for(viewer_user).get(
+        "/api/analytics/dashboard/", {"department": departments["ops"].pk}
+    )
+    assert response.status_code == 200
+    assert response.data["total_kg_co2e"] == "100.00"
+    assert {"department": "Operations", "kg_co2e": "100.00"} in response.json()["by_department"]
+
+
+def test_dashboard_api_unassigned_department_filter(
+    api_for, viewer_user, organisation, sites, factors, departments
+):
+    add(
+        organisation,
+        sites["office"],
+        factors["power"],
+        date(2026, 1, 10),
+        "100",
+        departments["ops"],
+    )
+    add(organisation, sites["plant"], factors["diesel"], date(2026, 2, 20), "400")
+    response = api_for(viewer_user).get("/api/analytics/dashboard/", {"department": "unassigned"})
+    assert response.status_code == 200
+    assert response.data["total_kg_co2e"] == "400.00"
+
+
+def test_department_filter_from_another_company_is_rejected(api_for, viewer_user):
+    other = Organisation.objects.create(name="Other AG")
+    other_department = Department.objects.create(organisation=other, name="Elsewhere dept")
+    response = api_for(viewer_user).get(
+        "/api/analytics/dashboard/", {"department": other_department.pk}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_filter"
+
+
+def test_department_filter_unknown_id_is_rejected(api_for, viewer_user):
+    response = api_for(viewer_user).get("/api/analytics/dashboard/", {"department": 999999})
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_filter"
+
+
+# Sustainability score ---------------------------------------------------------
+
+
+def test_sustainability_score_is_none_without_an_all_scopes_target(organisation):
+    assert services.sustainability_score(organisation) is None
+
+
+def test_sustainability_score_is_high_when_on_track(organisation, sites, factors):
+    ReductionTarget.objects.create(
+        organisation=organisation,
+        scope=ReductionTarget.Scope.ALL,
+        baseline_year=2020,
+        baseline_kg_co2e=Decimal("10000"),
+        target_year=2030,
+        reduction_percent=Decimal("50"),
+    )
+    add(organisation, sites["office"], factors["power"], date(2026, 3, 1), "3000")
+    score = services.sustainability_score(organisation, as_of=date(2026, 7, 2))
+    assert score == Decimal("100")
+
+
+def test_sustainability_score_is_low_when_off_track(organisation, sites, factors):
+    ReductionTarget.objects.create(
+        organisation=organisation,
+        scope=ReductionTarget.Scope.ALL,
+        baseline_year=2020,
+        baseline_kg_co2e=Decimal("10000"),
+        target_year=2030,
+        reduction_percent=Decimal("50"),
+    )
+    add(organisation, sites["office"], factors["power"], date(2026, 3, 1), "9500")
+    score = services.sustainability_score(organisation, as_of=date(2026, 7, 2))
+    assert score == Decimal("0")
+
+
+def test_sustainability_score_at_or_before_baseline_year_has_no_divide_by_zero(organisation):
+    ReductionTarget.objects.create(
+        organisation=organisation,
+        scope=ReductionTarget.Scope.ALL,
+        baseline_year=2020,
+        baseline_kg_co2e=Decimal("10000"),
+        target_year=2030,
+        reduction_percent=Decimal("50"),
+    )
+    score = services.sustainability_score(organisation, as_of=date(2020, 1, 1))
+    assert score == Decimal("100")
+
+
+def test_sustainability_score_stays_within_0_and_100(organisation, sites, factors):
+    ReductionTarget.objects.create(
+        organisation=organisation,
+        scope=ReductionTarget.Scope.ALL,
+        baseline_year=2020,
+        baseline_kg_co2e=Decimal("10000"),
+        target_year=2030,
+        reduction_percent=Decimal("50"),
+    )
+    add(organisation, sites["office"], factors["power"], date(2026, 3, 1), "3000")
+    add(organisation, sites["office"], factors["power"], date(2026, 3, 2), "9500")
+    score = services.sustainability_score(organisation, as_of=date(2026, 7, 2))
+    assert Decimal("0") <= score <= Decimal("100")
+
+
+def test_dashboard_api_includes_sustainability_score(api_for, viewer_user, organisation, records):
+    ReductionTarget.objects.create(
+        organisation=organisation,
+        scope=ReductionTarget.Scope.ALL,
+        baseline_year=2020,
+        baseline_kg_co2e=Decimal("10000"),
+        target_year=2030,
+        reduction_percent=Decimal("50"),
+    )
+    response = api_for(viewer_user).get("/api/analytics/dashboard/")
+    assert response.status_code == 200
+    assert 0 <= float(response.json()["sustainability_score"]) <= 100
+
+
+def test_dashboard_api_sustainability_score_is_null_without_a_target(api_for, viewer_user, records):
+    response = api_for(viewer_user).get("/api/analytics/dashboard/")
+    assert response.status_code == 200
+    assert response.json()["sustainability_score"] is None
+
+
+# PDF export --------------------------------------------------------------------
+
+
+def test_pdf_export_returns_a_valid_pdf(api_for, viewer_user, records):
+    response = api_for(viewer_user).get("/api/analytics/export/pdf/")
+    assert response.status_code == 200
+    assert response.data["filename"].endswith(".pdf")
+    content = base64.b64decode(response.data["content_base64"])
+    assert content.startswith(b"%PDF")
+
+
+def test_pdf_export_respects_filters(api_for, viewer_user, records):
+    full = base64.b64decode(
+        api_for(viewer_user).get("/api/analytics/export/pdf/").data["content_base64"]
+    )
+    scoped = base64.b64decode(
+        api_for(viewer_user).get("/api/analytics/export/pdf/", {"scope": 2}).data["content_base64"]
+    )
+    assert scoped.startswith(b"%PDF")
+    assert len(scoped) != len(full)
+
+
+# Error handling ----------------------------------------------------------------
+
+
+def test_csv_export_returns_404_json_for_no_data(api_for, viewer_user, organisation):
+    response = api_for(viewer_user).get("/api/analytics/export/csv/")
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": "no_data",
+        "detail": "No activity records matched these filters.",
+    }
+
+
+def test_pdf_export_returns_404_json_for_no_data(api_for, viewer_user, organisation):
+    response = api_for(viewer_user).get("/api/analytics/export/pdf/")
+    assert response.status_code == 404
+    assert response.json()["error"] == "no_data"
+
+
+def test_dashboard_api_rejects_bad_dates_as_invalid_filter_json(api_for, viewer_user):
+    response = api_for(viewer_user).get(
+        "/api/analytics/dashboard/", {"start": "2026-03-01", "end": "2026-02-01"}
+    )
+    assert response.status_code == 400
+
+
+def test_filter_records_second_line_of_defense_rejects_bad_scope(organisation):
+    assert services.filter_records(organisation, scope=1).count() == 0
+
+
+def test_export_csv_raises_no_data_error_for_empty_queryset(organisation):
+    with pytest.raises(NoDataError):
+        services.export_csv(ActivityRecord.objects.filter(organisation=organisation))
+
+
+def test_export_pdf_raises_no_data_error_for_empty_queryset(organisation):
+    with pytest.raises(NoDataError):
+        services.export_pdf(
+            organisation, ActivityRecord.objects.filter(organisation=organisation), {}, None
+        )
+
+
+def test_export_pdf_wraps_unexpected_failures_as_export_error(organisation, records, monkeypatch):
+    def broken(_records):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(services, "scope_totals", broken)
+    with pytest.raises(ExportError):
+        services.export_pdf(organisation, records, {}, None)
+
+
+def test_analytics_errors_carry_a_status_code():
+    assert issubclass(InvalidFilterError, AnalyticsError)
+    assert InvalidFilterError().status_code == 400
