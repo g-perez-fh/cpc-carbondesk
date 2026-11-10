@@ -16,6 +16,7 @@ from frontend.layout import page_layout
 SCOPES = {1: "Scope 1 · Direct", 2: "Scope 2 · Energy", 3: "Scope 3 · Indirect"}
 # Blue, orange and teal differ in lightness too, so the scopes stay readable without colour.
 SCOPE_COLOURS = {1: "#1f5f8b", 2: "#e08a2c", 3: "#2a9d8f"}
+TEXT_COLOUR = "#374151"
 TARGET_STATUS = {
     "on_track": ("On track", "positive"),
     "at_risk": ("At risk", "warning"),
@@ -27,8 +28,19 @@ CHART_LAYOUT = {
     "height": 300,
     "paper_bgcolor": "rgba(0,0,0,0)",
     "plot_bgcolor": "rgba(0,0,0,0)",
-    "font": {"family": "Inter, Arial, sans-serif"},
+    # Sets the default colour for every axis tick, title and legend label too.
+    "font": {"family": "Inter, Arial, sans-serif", "color": TEXT_COLOUR},
+    "colorway": [SCOPE_COLOURS[1], SCOPE_COLOURS[2], SCOPE_COLOURS[3]],
 }
+# Scoped to .analytics-filters so it only affects this page's filter row.
+FILTER_LABEL_CSS = f"""
+.analytics-filters .q-field__label {{
+    color: {TEXT_COLOUR} !important;
+    opacity: 1 !important;
+    font-size: 1rem;
+    font-weight: 400;
+}}
+"""
 
 
 # Chart builders are plain functions so they can be tested without a browser.
@@ -44,7 +56,8 @@ def scope_figure(by_scope):
             textinfo="percent",
             hovertemplate="%{label}<br>%{value:,.2f} kg CO2e<extra></extra>",
         ),
-        layout=CHART_LAYOUT | {"legend": {"orientation": "h", "y": -0.1}},
+        layout=CHART_LAYOUT
+        | {"legend": {"orientation": "h", "y": -0.1, "font": {"color": TEXT_COLOUR}}},
     )
 
 
@@ -54,7 +67,8 @@ def trend_figure(trend):
             x=[row["month"] for row in trend],
             y=[float(row["kg_co2e"]) for row in trend],
             mode="lines+markers",
-            line={"color": "#1f5f8b", "width": 3},
+            line={"color": SCOPE_COLOURS[1], "width": 3},
+            marker={"color": SCOPE_COLOURS[1]},
             hovertemplate="%{x}<br>%{y:,.2f} kg CO2e<extra></extra>",
         ),
         layout=CHART_LAYOUT
@@ -69,7 +83,7 @@ def site_figure(by_site):
             x=[float(row["kg_co2e"]) for row in rows],
             y=[row["site"] for row in rows],
             orientation="h",
-            marker={"color": "#2a9d8f"},
+            marker={"color": SCOPE_COLOURS[3]},
             hovertemplate="%{y}<br>%{x:,.2f} kg CO2e<extra></extra>",
         ),
         layout=CHART_LAYOUT | {"xaxis": {"title": "kg CO2e"}},
@@ -83,7 +97,7 @@ def department_figure(by_department):
             x=[float(row["kg_co2e"]) for row in rows],
             y=[row["department"] for row in rows],
             orientation="h",
-            marker={"color": "#1f5f8b"},
+            marker={"color": SCOPE_COLOURS[1]},
             hovertemplate="%{y}<br>%{x:,.2f} kg CO2e<extra></extra>",
         ),
         layout=CHART_LAYOUT | {"xaxis": {"title": "kg CO2e"}},
@@ -103,10 +117,11 @@ async def page():
 class DashboardPage:
     def __init__(self):
         self.filters = {}
+        ui.add_css(FILTER_LABEL_CSS)
         ui.label("See where your emissions come from and how they change over time.").classes(
             "text-gray-600"
         )
-        with ui.row().classes("w-full items-end gap-3"):
+        with ui.row().classes("w-full items-end gap-3 analytics-filters"):
             self.start = ui.input("From").props("type=date outlined dense")
             self.end = ui.input("Before (exclusive)").props("type=date outlined dense")
             self.scope = (
@@ -269,7 +284,7 @@ class DashboardPage:
                 ui.label(
                     f"{target['reporting_year']}: projected {kg(target['projected_kg_co2e'])}, "
                     f"target {kg(target['target_kg_co2e'])}"
-                ).classes("text-sm text-gray-600")
+                ).classes("text-sm text-gray-700")
 
     async def export_csv(self):
         ok, data = await call_api(api.get("analytics/export/csv/", params=self.filters))
