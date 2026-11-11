@@ -1,0 +1,17 @@
+services:
+  backup:
+    image: postgres:17-alpine
+    environment:
+      PGHOST: db
+      PGDATABASE: ${POSTGRES_DB:-carbondesk}
+      PGUSER: ${POSTGRES_USER:-carbondesk}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-carbondesk-local-only}
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      - backups:/backups
+    command: ["sh", "-c", "while true; do sh /backup.sh || echo 'Backup failed' >&2; sleep 86400; done"]
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  backups:

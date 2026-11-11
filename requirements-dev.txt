@@ -1,4 +1,6 @@
 -r requirements.txt
 pytest==9.2.0
 pytest-django==4.14.0
+# Coverage measurement for the Stage-5 >=80% emissions-target check (plan.md line 271).
+pytest-cov==7.1.0
 ruff==0.17.3
