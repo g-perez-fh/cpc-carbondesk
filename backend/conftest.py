@@ -18,6 +18,25 @@ def no_openai_key(settings):
     settings.OPENAI_API_KEY = ""
 
 
+@pytest.fixture(autouse=True)
+def isolated_media_root(settings, tmp_path, monkeypatch):
+    """Redirect upload storage to a temporary directory for every backend test.
+
+    ``MEDIA_ROOT`` and the default storage object that ``emissions.services``
+    imported are re-pointed at a throwaway location, so no test anywhere can
+    write files into the real ``backend/media`` tree. Returns the temporary
+    media directory for assertions on stored files.
+    """
+    from django.core.files.storage import FileSystemStorage
+
+    media_dir = tmp_path / "media"
+    settings.MEDIA_ROOT = media_dir
+    storage = FileSystemStorage(location=str(media_dir))
+    monkeypatch.setattr("django.core.files.storage.default_storage", storage)
+    monkeypatch.setattr("emissions.services.default_storage", storage)
+    return media_dir
+
+
 @pytest.fixture
 def organisation(db):
     return Organisation.objects.create(name="Acme GmbH", industry="Manufacturing")

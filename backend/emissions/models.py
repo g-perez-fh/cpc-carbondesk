@@ -80,3 +80,28 @@ class ActivityRecord(models.Model):
 
     def __str__(self):
         return self.description
+
+
+class ImportLog(models.Model):
+    class Outcome(models.TextChoices):
+        SUCCESS = "success", "Success"
+        REJECTED = "rejected", "Rejected"
+        FAILED = "failed", "Failed"
+
+    organisation = models.ForeignKey("accounts.Organisation", on_delete=models.CASCADE)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    original_name = models.CharField(max_length=255)
+    stored_file = models.FileField(upload_to="private/emissions-imports/", blank=True)
+    outcome = models.CharField(max_length=12, choices=Outcome.choices)
+    row_count = models.PositiveIntegerField(default=0)
+    accepted_count = models.PositiveIntegerField(default=0)
+    rejected_count = models.PositiveIntegerField(default=0)
+    created_count = models.PositiveIntegerField(default=0)
+    error_messages = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"{self.original_name}: {self.outcome}"
