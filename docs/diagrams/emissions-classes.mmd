@@ -1,0 +1,137 @@
+%% Emissions subsystem class diagram (CarbonDesk, subsystem 1: Emissions Data and Calculation).
+%% Source: docs/emissions-class-inventory.md (task D01), re-verified against backend/emissions
+%% and backend/accounts code on branch feature/emissions-import-history, head 97c11b5
+%% (11 November 2026). Field types are simplified (str, Decimal, date, int, bool, list);
+%% exact Django field definitions live in backend/emissions/models.py.
+%% Classes marked <<accounts>> are minimal external boxes from subsystem 4
+%% (backend/accounts/models.py), shown only to explain ownership. AuditLog is written
+%% through accounts.services.record_audit using string object references, with no database
+%% FK from emissions, so it has no edge here. There is no ActivityRecord-ImportLog FK.
+classDiagram
+    direction TB
+
+    class Organisation {
+        <<accounts>>
+        +name : str
+    }
+
+    class Site {
+        <<accounts>>
+        +name : str
+    }
+
+    class Department {
+        <<accounts>>
+        +name : str
+    }
+
+    class User {
+        <<accounts>>
+        +organisation : Organisation or None
+        +role : str
+    }
+
+    class EmissionFactor {
+        +organisation : Organisation
+        +name : str
+        +scope : int
+        +unit : str
+        +kg_per_unit : Decimal
+        +source : str
+        +year : int
+        +is_demo : bool
+    }
+
+    class ActivityRecord {
+        +organisation : Organisation
+        +site : Site
+        +factor : EmissionFactor
+        +department : Department or None
+        +description : str
+        +date : date
+        +quantity : Decimal
+        +category : str
+        +scope : int
+        +unit : str
+        +factor_value : Decimal
+        +factor_source : str
+        +factor_year : int
+        +is_demo : bool
+        +kg_co2e : Decimal
+        +created_by : User or None
+    }
+
+    class ImportLog {
+        +organisation : Organisation
+        +created_by : User or None
+        +original_name : str
+        +stored_file : str
+        +outcome : str
+        +row_count : int
+        +accepted_count : int
+        +rejected_count : int
+        +created_count : int
+        +error_messages : list
+    }
+
+    class CO2eCalculator {
+        -_kg_per_unit : Decimal
+        -_unit : str
+        +set_factor(kg_per_unit, unit)
+        +get_factor() Decimal
+        +get_unit() str
+        +calculate(quantity, unit) Decimal
+    }
+
+    class CsvImporter {
+        -_text : str
+        -_sites_by_name : dict
+        -_factors_by_name : dict
+        -_departments_by_name : dict
+        +get_text() str
+        +set_text(text)
+        +parse()
+    }
+
+    class ImportedActivity {
+        <<dataclass>>
+        +row_number : int
+        +date : date
+        +description : str
+        +site : Site
+        +factor : EmissionFactor
+        +quantity : Decimal
+        +unit : str
+        +department : Department or None
+    }
+
+    class EmissionsError {
+        <<exception>>
+    }
+
+    class ValueError {
+        <<builtin>>
+    }
+
+    EmissionsError --|> ValueError
+
+    EmissionFactor "0..*" --> "1" Organisation : organisation CASCADE
+    ActivityRecord "0..*" --> "1" Organisation : organisation CASCADE
+    ActivityRecord "0..*" --> "1" Site : site PROTECT
+    ActivityRecord "0..*" --> "1" EmissionFactor : factor PROTECT
+    ActivityRecord "0..*" --> "0..1" Department : department PROTECT optional
+    ActivityRecord "0..*" --> "0..1" User : created_by SET_NULL optional
+    ImportLog "0..*" --> "1" Organisation : organisation CASCADE
+    ImportLog "0..*" --> "0..1" User : created_by SET_NULL optional
+    Site "0..*" --> "1" Organisation : organisation CASCADE
+    Department "0..*" --> "1" Organisation : organisation CASCADE
+
+    CsvImporter ..> ImportedActivity : emits one per valid row
+    CsvImporter ..> CO2eCalculator : dry-runs each row before accepting
+
+    note for EmissionFactor "Scopes 1/2/3; names may repeat across years. Import requires factor_year when ambiguous."
+    note for ActivityRecord "Module-level services handle writes; no Service class. Category, scope, unit and factor fields are calculation-time snapshots."
+    note for ImportLog "One attempt; no ActivityRecord FK. created_count is a count; stored_file is set after private storage succeeds."
+    note for CsvImporter "Parses/validates text only. Name maps detect ambiguity; REQUIRED_COLUMNS and MAX_ROWS=5000. Caller persists."
+    note for CO2eCalculator "One factor per instance; rejects invalid input and unit mismatch; precision 40, ROUND_HALF_UP to 2 decimals."
+    note for ImportedActivity "Frozen value for one validated CSV row; persisted by create_activity."
