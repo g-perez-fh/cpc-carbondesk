@@ -182,7 +182,7 @@ no real key is stored in the repository):
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | API key from Google AI Studio. Leave empty to run without AI. | empty |
-| `GEMINI_MODEL` | Gemini model used for chat and monthly summaries. | `gemini-3.5-flash` |
+| `GEMINI_MODEL` | Gemini model used for chat and monthly summaries. | `gemini-3.1-flash-lite` |
 | `GEMINI_TIMEOUT_SECONDS` | Request timeout for one model call, in seconds. | `30` |
 
 If you migrate from an older checkout, remove the previous `OPENAI_API_KEY`,
@@ -198,7 +198,7 @@ image after pulling new code: `docker compose up --build`. Compose passes the
 settings above to the backend container when it starts. The test suite mocks
 AI requests and blocks unmocked calls through the adapter, so assistant tests
 need no key and cannot send live AI requests. A local live-key check also
-confirmed chat responses with synthetic emissions data using `gemini-3.5-flash`.
+confirmed chat responses with synthetic emissions data using `gemini-3.1-flash-lite`.
 
 ## Working together
 
