@@ -30,6 +30,12 @@ building a web platform for small and medium companies to track Scope 1, 2,
 and 3 carbon emissions, view their results, and get AI suggestions for reducing
 their footprint.
 
+## Hometasks videos
+[Hometask 1](https://drive.google.com/file/d/1lnminqtsOiUDFpo5AU4d-n9aW0n23gPX/view?usp=drive_link)
+[Hometask 2](https://drive.google.com/file/d/1vSnj48LUbQVJDBbEYKEqYcn1fh1l2RzW/view?usp=drive_link)
+[Hometask 3](https://drive.google.com/file/d/18hpc8EBgo4YM00Iat56wUgKBvHRh2cKu/view?usp=drive_link)
+[Hometask 4](https://drive.google.com/file/d/106W1iN7vCgCEsEyJsNdvI5q3gFeVKJFi/view?usp=drive_link)
+
 ## Planned stack
 
 | Technology | Purpose |
