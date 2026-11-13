@@ -1,0 +1,44 @@
+{
+  "source": "UK Government GHG Conversion Factors for Company Reporting 2025",
+  "publication_url": "https://www.gov.uk/government/publications/greenhouse-gas-reporting-conversion-factors-2025",
+  "attachment_url": "https://assets.publishing.service.gov.uk/media/6846b6ea57f3515d9611f0dd/ghg-conversion-factors-2025-flat-format.xlsx",
+  "attachment_filename": "ghg-conversion-factors-2025-flat-format.xlsx",
+  "attachment_size_bytes": 505634,
+  "attachment_sha256": "8bfdb45b81ec4a88e3bdf4584637330f62e6bd09ce1940e654c5d7b7f736de94",
+  "publisher": "Department for Energy Security and Net Zero",
+  "publication_date": "2025-06-10",
+  "verified_on": "2026-11-10",
+  "workbook_sheet": "Factors by Category",
+  "header_row": 6,
+  "year_column": "GHG Conversion Factor 2025",
+  "ghg_unit": "kg CO2e (aggregate of all gases; the workbook also lists separate CO2, CH4 and N2O component rows that this subset does not use)",
+  "emissions_boundary": "Direct combustion only (Scope 1). The same workbook separately publishes upstream well-to-tank factors under Level 1 'WTT- fuels', Scope 3, for example Butane rows 3458-3461 (tonnes 344.30947, litres 0.19765), which are not included here. The two kinds of factor must not be merged into one value or used to double-count a single fuel activity; a properly scoped company inventory may still report combustion as Scope 1 and well-to-tank as Scope 3 as separate activities.",
+  "conversion_notes": "Values are used exactly as published in the year column; no conversion or rounding was applied.",
+  "naming": "Each factor keeps its original workbook name here. When persisted, the seed command appends exactly one unit suffix as 'name (unit)' so that two same-year factors with different units never share a stored name; CSV import looks factors up by this stored name plus optional factor_year.",
+  "persisted_names": {
+    "7": "Butane (tonnes)",
+    "11": "Butane (litres)"
+  },
+  "workbook_rows": {
+    "7": {"workbook_id": "1_100_1000_15_1", "levels": "Fuels / Gaseous fuels / Butane"},
+    "11": {"workbook_id": "1_100_1000_8_1", "levels": "Fuels / Gaseous fuels / Butane"}
+  },
+  "factors": [
+    {
+      "name": "Butane",
+      "scope": 1,
+      "unit": "tonnes",
+      "kg_per_unit": "3033.38067",
+      "year": 2025,
+      "source_row": 7
+    },
+    {
+      "name": "Butane",
+      "scope": 1,
+      "unit": "litres",
+      "kg_per_unit": "1.74533",
+      "year": 2025,
+      "source_row": 11
+    }
+  ]
+}

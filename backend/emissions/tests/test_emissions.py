@@ -452,7 +452,41 @@ def test_recalculation_failure_rolls_back(api_for, admin_user, factor, saved_act
     def fail(**kwargs):
         raise RuntimeError("Audit unavailable")
 
-    monkeypatch.setattr("emissions.views.record_audit", fail)
+    # recalculate_factor_records now lives in services.py, so the audit hook
+    # is patched in that module; the rollback behavior under test is unchanged.
+    monkeypatch.setattr("emissions.services.record_audit", fail)
     with pytest.raises(RuntimeError):
         client.post(url + "recalculate/", {"factor": corrected}, format="json")
     assert ActivityRecord.objects.get(pk=saved_activity["id"]).kg_co2e == Decimal("40")
+
+
+def test_summary_requires_authentication_and_membership(api_for, factor, site):
+    assert APIClient().get("/api/emissions/summary/").status_code == 401
+    memberless = User.objects.create_user(username="org-less")
+    assert api_for(memberless).get("/api/emissions/summary/").status_code == 403
+
+
+def test_summary_shape_units_and_empty_scope(api_for, admin_user, factor, site, saved_activity):
+    response = api_for(admin_user).get("/api/emissions/summary/")
+    assert response.status_code == 200
+    summary = response.json()
+    assert set(summary) == {"count", "demo_count", "total_kg_co2e", "by_scope", "unit"}
+    assert summary["unit"] == "kg CO2e"
+    assert summary["count"] == 1
+    assert summary["demo_count"] == 1
+    assert summary["total_kg_co2e"] == "40.00"
+    assert set(summary["by_scope"]) == {"1", "2", "3"}
+    assert summary["by_scope"]["2"] == "40.00"
+    assert summary["by_scope"]["1"] == "0.00"
+
+    # Empty-scope convention: a filtered window with no records is a valid,
+    # all-zero answer, not an error.
+    empty = (
+        api_for(admin_user)
+        .get("/api/emissions/summary/", {"start": "2030-01-01", "end": "2030-02-01"})
+        .json()
+    )
+    assert empty["count"] == 0
+    assert empty["demo_count"] == 0
+    assert empty["total_kg_co2e"] == "0.00"
+    assert empty["by_scope"] == {"1": "0.00", "2": "0.00", "3": "0.00"}

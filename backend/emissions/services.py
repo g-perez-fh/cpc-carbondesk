@@ -1,8 +1,10 @@
 """Save activities and expose company totals to the other subsystems."""
 
 from decimal import Decimal
+from uuid import uuid4
 
-from django.db import transaction
+from django.core.files.storage import default_storage
+from django.db import DatabaseError, transaction
 from django.db.models import Sum
 
 from accounts.models import AuditLog, Department, Site
@@ -10,7 +12,7 @@ from accounts.services import record_audit
 
 from .calculations import CO2eCalculator, EmissionsError
 from .csv_import import CsvImporter
-from .models import ActivityRecord, EmissionFactor
+from .models import ActivityRecord, EmissionFactor, ImportLog
 
 
 @transaction.atomic
@@ -65,6 +67,49 @@ def update_activity(record, *, refresh_factor=False, **fields):
 
 
 @transaction.atomic
+def recalculate_factor_records(*, organisation, factor, actor):
+    """Recompute saved totals after a factor correction; return how many changed.
+
+    Chosen rule (our decision, not a professor requirement): stored ``kg_co2e``
+    keeps the factor values it was calculated with until an explicit
+    recalculation runs — this function is that path. It touches only records
+    of ``factor`` inside ``organisation``. Every changed record gets one
+    UPDATE audit entry whose ``before`` snapshot preserves the
+    pre-correction values, so old numbers stay reconstructable from the
+    append-only ``AuditLog.changes`` JSON field instead of a new history
+    table. Limitation of that choice: snapshots store serializer
+    representations (displayed strings such as "40.00"), not raw database
+    values, and reconstruction pairs a record with its single audit entry.
+    """
+    # Imported here, not at module level: serializers.py imports service
+    # functions from this module, so a top-level import would be circular.
+    from .serializers import ActivityRecordSerializer
+
+    updated = 0
+    records = (
+        ActivityRecord.objects.select_for_update()
+        .filter(organisation=organisation, factor=factor)
+        .order_by("pk")
+    )
+    for record in records:
+        before = dict(ActivityRecordSerializer(record).data)
+        try:
+            update_activity(record, factor=factor, refresh_factor=True)
+        except EmissionsError as exc:
+            raise EmissionsError(f"Activity {record.pk}: {exc}") from exc
+        after = dict(ActivityRecordSerializer(record).data)
+        if before != after:
+            record_audit(
+                actor=actor,
+                action=AuditLog.Action.UPDATE,
+                instance=record,
+                changes={"reason": "factor_recalculation", "before": before, "after": after},
+            )
+            updated += 1
+    return updated
+
+
+@transaction.atomic
 def import_activities(*, organisation, created_by, text):
     """Validate the whole file, then save every row or none of them."""
     sites_by_name = {}
@@ -99,6 +144,76 @@ def import_activities(*, organisation, created_by, text):
         )
         record_audit(actor=created_by, action=AuditLog.Action.CREATE, instance=record)
     return len(activities), []
+
+
+def persist_import(*, organisation, created_by, original_name, uploaded_file, text):
+    """Persist one import attempt; file storage is private and removed on rollback.
+
+    Raises OSError when the upload cannot be stored, or DatabaseError when the
+    activities cannot be saved. Both exceptions happen after the attempt is
+    recorded in `ImportLog` and are re-raised to the caller.
+    """
+    log = ImportLog.objects.create(
+        organisation=organisation,
+        created_by=created_by,
+        original_name=original_name[:255],
+        outcome=ImportLog.Outcome.FAILED,
+    )
+    suffix = original_name.rsplit(".", 1)[-1] if "." in original_name else "csv"
+    safe_suffix = suffix.lower() if suffix.isalnum() and len(suffix) <= 8 else "csv"
+    path = f"private/emissions-imports/{organisation.pk}/{uuid4().hex}.{safe_suffix}"
+    try:
+        # Reset upload's cursor if the caller already read it to validate/decode.
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
+        saved_path = default_storage.save(path, uploaded_file)
+    except OSError:
+        log.error_messages = [
+            "Upload storage failed: an internal error occurred while saving the file."
+        ]
+        log.save(update_fields=["error_messages"])
+        raise
+
+    try:
+        with transaction.atomic():
+            log.stored_file.name = saved_path
+            created, errors = import_activities(
+                organisation=organisation, created_by=created_by, text=text
+            )
+            # Count rejected rows, not error messages: one row can fail
+            # several validations and must be counted only once.
+            rejected_rows = len({error["row"] for error in errors})
+            log.row_count = created + rejected_rows
+            log.accepted_count = created
+            log.created_count = created
+            log.rejected_count = rejected_rows
+            if errors:
+                log.outcome = ImportLog.Outcome.REJECTED
+                log.error_messages = [
+                    f"Row {error['row']}: {error['message']}" for error in errors[:100]
+                ]
+            else:
+                log.outcome = ImportLog.Outcome.SUCCESS
+            log.save()
+        return log, created, errors
+    except DatabaseError:
+        default_storage.delete(saved_path)
+        try:
+            log.refresh_from_db()
+            log.stored_file = ""
+            log.outcome = ImportLog.Outcome.FAILED
+            # Do not record str(exc): database errors can expose internal
+            # table and constraint details through the import history view.
+            log.error_messages = [
+                "Database save failed: an internal error occurred while saving activities."
+            ]
+            log.save(update_fields=["stored_file", "outcome", "error_messages"])
+        except DatabaseError:
+            # A broken connection or aborted transaction can fail the
+            # cleanup itself; the original DatabaseError is re-raised
+            # regardless, so the caller still sees the real failure.
+            pass
+        raise
 
 
 def scope_totals(records):

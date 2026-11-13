@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, serializers, viewsets
 from rest_framework.decorators import action
@@ -14,14 +14,14 @@ from accounts.permissions import CanEditDataOrReadOnly, IsOrganisationMember
 from accounts.services import record_audit
 
 from .calculations import EmissionsError
-from .models import ActivityRecord, EmissionFactor
+from .models import ActivityRecord, EmissionFactor, ImportLog
 from .serializers import (
     ActivityFilterSerializer,
     ActivityRecordSerializer,
     CalculationSerializer,
     EmissionFactorSerializer,
 )
-from .services import import_activities, scope_totals, update_activity
+from .services import persist_import, recalculate_factor_records, scope_totals
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_REPORTED_ERRORS = 100
@@ -65,29 +65,12 @@ class EmissionFactorViewSet(
             return Response(
                 {"detail": "The factor changed. Refresh and confirm again."}, status=409
             )
-        records = (
-            ActivityRecord.objects.select_for_update()
-            .filter(organisation=request.user.organisation, factor=factor)
-            .order_by("pk")
-        )
-        updated = 0
-        for record in records:
-            before = dict(ActivityRecordSerializer(record).data)
-            try:
-                update_activity(record, factor=factor, refresh_factor=True)
-            except EmissionsError as exc:
-                raise serializers.ValidationError(
-                    {"detail": f"Activity {record.pk}: {exc}"}
-                ) from exc
-            after = dict(ActivityRecordSerializer(record).data)
-            if before != after:
-                record_audit(
-                    actor=request.user,
-                    action=AuditLog.Action.UPDATE,
-                    instance=record,
-                    changes={"reason": "factor_recalculation", "before": before, "after": after},
-                )
-                updated += 1
+        try:
+            updated = recalculate_factor_records(
+                organisation=request.user.organisation, factor=factor, actor=request.user
+            )
+        except EmissionsError as exc:
+            raise serializers.ValidationError({"detail": str(exc)}) from exc
         return Response({"updated": updated})
 
 
@@ -182,11 +165,21 @@ class ActivityRecordViewSet(
         except UnicodeDecodeError:
             return Response({"file": ["The file must be UTF-8 encoded."]}, status=400)
 
-        created, errors = import_activities(
-            organisation=request.user.organisation,
-            created_by=request.user,
-            text=text,
-        )
+        try:
+            log, created, errors = persist_import(
+                organisation=request.user.organisation,
+                created_by=request.user,
+                original_name=upload.name,
+                uploaded_file=upload,
+                text=text,
+            )
+        except (OSError, DatabaseError):
+            # Expected storage/database failures; a programming error must not
+            # be turned into this misleading HTTP response.
+            return Response(
+                {"file": ["The import could not be saved. No activities were created."]},
+                status=500,
+            )
         if errors:
             messages = [
                 f"Row {error['row']}: {error['message']}" for error in errors[:MAX_REPORTED_ERRORS]
@@ -198,6 +191,29 @@ class ActivityRecordViewSet(
                 )
             return Response({"file": messages}, status=400)
         return Response({"created": created, "unit": "kg CO2e"}, status=201)
+
+
+class ImportHistoryView(APIView):
+    permission_classes = [IsOrganisationMember]
+
+    def get(self, request):
+        logs = ImportLog.objects.filter(organisation=request.user.organisation)
+        return Response(
+            [
+                {
+                    "id": log.pk,
+                    "original_name": log.original_name,
+                    "outcome": log.outcome,
+                    "row_count": log.row_count,
+                    "accepted_count": log.accepted_count,
+                    "rejected_count": log.rejected_count,
+                    "created_count": log.created_count,
+                    "error_messages": log.error_messages,
+                    "created_at": log.created_at,
+                }
+                for log in logs[:100]
+            ]
+        )
 
 
 class CalculationView(APIView):
