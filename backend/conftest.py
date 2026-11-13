@@ -13,9 +13,19 @@ def clear_throttle_cache():
 
 
 @pytest.fixture(autouse=True)
-def no_openai_key(settings):
-    """Tests never call the real AI service unless they opt in by mocking it."""
-    settings.OPENAI_API_KEY = ""
+def no_gemini_key(settings, monkeypatch):
+    """Tests never call the real AI service unless they opt in by mocking it.
+
+    Clearing the key keeps a developer's ``.env`` from triggering live model
+    traffic. As a second guard, the adapter's HTTP entry point fails loudly
+    instead of reaching the network when a test forgets to mock it.
+    """
+
+    def forbid_live_request(*args, **kwargs):
+        raise AssertionError("Assistant tests must mock assistant.llm.httpx.post.")
+
+    settings.GEMINI_API_KEY = ""
+    monkeypatch.setattr("assistant.llm.httpx.post", forbid_live_request)
 
 
 @pytest.fixture(autouse=True)

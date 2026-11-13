@@ -15,7 +15,7 @@ time, reduction targets are tracked per scope, and an AI assistant explains the 
 and suggests practical ways to reduce emissions.
 
 **Tech stack:** Python 3.13, Django, Django REST Framework, NiceGUI, Plotly,
-PostgreSQL / MySQL / SQLite, OpenAI API, Docker, pytest
+PostgreSQL / MySQL / SQLite, Google Gemini API, Docker, pytest
 
 ### Team overview
 
@@ -39,7 +39,7 @@ their footprint.
 | NiceGUI | Web interface with activity forms, CSV uploads, tables, dashboards, and an assistant chat. |
 | PostgreSQL | Shared database for organisations, activity records, emission factors, targets, and chat history. |
 | Plotly | Interactive emissions charts and trends. |
-| OpenAI API | Explanations and reduction suggestions based on company emissions data. |
+| Google Gemini API | Explanations and reduction suggestions based on company emissions data. |
 | Docker Compose | Run the application components and database together. |
 | pytest | Automated tests for calculations and application behavior. |
 
@@ -162,6 +162,38 @@ Stop the Python servers before starting Compose to avoid port conflicts.
 These Docker files are for local development and demos: they use Django's
 development server and local credentials, not a production deployment.
 
+### AI assistant configuration (Google Gemini)
+
+The assistant sends company emissions summaries to the Google Gemini API through
+the documented `generateContent` REST interface
+(https://ai.google.dev/api/generate-content) and returns only the answer text.
+The API key travels in the `x-goog-api-key` request header, never in the URL.
+Current model names are listed at https://ai.google.dev/gemini-api/docs/models.
+
+Settings in `.env` (`.env.example` lists them with placeholder values only, so
+no real key is stored in the repository):
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | API key from Google AI Studio. Leave empty to run without AI. | empty |
+| `GEMINI_MODEL` | Gemini model used for chat and monthly summaries. | `gemini-3.5-flash` |
+| `GEMINI_TIMEOUT_SECONDS` | Request timeout for one model call, in seconds. | `30` |
+
+If you migrate from an older checkout, remove the previous `OPENAI_API_KEY`,
+`OPENAI_MODEL`, and `OPENAI_TIMEOUT_SECONDS` lines from your `.env`; they are no
+longer read. Keep real keys in `.env` only and never commit that file.
+
+Without a key the assistant keeps working: chat and monthly summaries fall back
+to rule-based answers built from the recorded emissions data. Savings estimates
+are always calculated by the backend, with or without AI.
+
+The backend dependencies changed with this migration, so rebuild the backend
+image after pulling new code: `docker compose up --build`. Compose passes the
+settings above to the backend container when it starts. The test suite mocks
+AI requests and blocks unmocked calls through the adapter, so assistant tests
+need no key and cannot send live AI requests. A local live-key check also
+confirmed chat responses with synthetic emissions data using `gemini-3.5-flash`.
+
 ## Working together
 
 - Add models and business logic in your Django subsystem and UI in the matching
@@ -197,7 +229,7 @@ department filter) and CSV/PDF export.
 - Register a company at http://localhost:8080/register; you become its administrator.
 - Roles: `admin` manages the organisation, members and targets; `editor` enters
   data; `viewer` has read-only access.
-- No OpenAI key is needed. Without `OPENAI_API_KEY` the assistant answers from
+- No Gemini key is needed. Without `GEMINI_API_KEY` the assistant answers from
   rules; savings estimates are always calculated by the backend, not the model.
 
 ### Shared building blocks for every subsystem

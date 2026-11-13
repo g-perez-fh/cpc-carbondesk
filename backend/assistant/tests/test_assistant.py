@@ -84,7 +84,7 @@ def test_chat_without_ai_key_answers_from_data(api_for, viewer_user, emissions):
 
 
 def test_chat_sends_company_data_and_history_to_model(viewer_user, emissions, settings):
-    settings.OPENAI_API_KEY = "test-key"
+    settings.GEMINI_API_KEY = "test-key"
     emissions[2] = Decimal("500")
     conversation = services.start_conversation(viewer_user)
     with patch("assistant.services.llm.complete", return_value="Use green power.") as complete:
@@ -141,6 +141,37 @@ def test_monthly_summary_compares_with_previous_month(organisation, emissions):
 
     services.generate_monthly_summary(organisation, date(2026, 9, 1))
     assert MonthlySummary.objects.count() == 1
+
+
+def test_monthly_summary_uses_model_reply_when_configured(organisation, emissions, settings):
+    settings.GEMINI_API_KEY = "test-key"
+    emissions.update({1: Decimal("300"), 2: Decimal("100")})
+    with patch(
+        "assistant.services.llm.complete", return_value="Model wrote this summary."
+    ) as complete:
+        summary = services.generate_monthly_summary(organisation, date(2026, 9, 15))
+
+    assert summary.content == "Model wrote this summary."
+    instructions, messages = complete.call_args.args
+    assert "Acme GmbH" in instructions
+    assert messages[0]["role"] == "user"
+    assert "2026-09" in messages[0]["content"]
+
+
+def test_monthly_summary_falls_back_when_model_fails(organisation, emissions):
+    emissions.update({1: Decimal("300"), 2: Decimal("100")})
+    with patch("assistant.services.llm.complete", side_effect=llm.LLMUnavailable("down")):
+        summary = services.generate_monthly_summary(organisation, date(2026, 9, 15))
+    assert summary.content.startswith("### Acme GmbH: September 2026")
+    assert "400.00 kg CO2e" in summary.content
+
+
+def test_empty_month_does_not_call_the_model(organisation, emissions, settings):
+    settings.GEMINI_API_KEY = "test-key"
+    with patch("assistant.services.llm.complete") as complete:
+        summary = services.generate_monthly_summary(organisation, date(2026, 9, 15))
+    complete.assert_not_called()
+    assert "No emissions were recorded for this month." in summary.content
 
 
 def test_summary_api_permissions_and_validation(api_for, admin_user, viewer_user, emissions):
